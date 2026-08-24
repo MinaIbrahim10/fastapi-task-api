@@ -289,3 +289,139 @@ curl -X POST http://localhost:8000/reset
 I created an additional task and confirmed that it appeared in `GET /tasks`. After stopping and restarting the API server, the added task disappeared and only the initial sample tasks remained.
 
 This happens because the application stores its data only in process memory. In-memory state is lost when the process stops, which is why persistent applications normally use a database or another durable storage system.
+## AI vs Me
+
+### First Prompt
+
+I wrote the following prompt from memory after completing the original API:
+
+```text
+act with 3 agents 
+first build a full fastapi appliction useing python 3.13+ it is about task u must add health endpoint to check API HEALTH GET
+/ endpoint to get API information and it must return that 
+
+{
+  "name": "Task API",
+  "version": "1.1",
+  "endpoints": [
+    "/tasks",
+    "/stats",
+    "/reset",
+    "/health"
+  ]
+}
+
+and endpoint to list all tasks GET
+and endpoint to create new task it takes title and it must retrn the task handle 200 and 400 for evertything also hadnle 422 to act as 400 POST
+
+and endpont TO GET TAKS BY ID IT TEKS THE ID AND RETURN THE TASK INFORMATION GET
+an endpoitn to modify a tak takes ID mandatory and cahnge it information
+{
+  "title": "string",
+  "done": true
+} PUT
+
+a delete endpoint by task id DELETE
+
+get statcks about taks get nothing and it retrns this
+{
+  "total": 3,
+  "done": 0,
+  "open": 3
+}
+
+reset task to rest all tasks idk modify it if something msisin POST
+
+the seond agent must create the full readme.md and reqiremtns.txt and give instructioncomamnds how to init and oush to github
+
+the third agent must verify the whole process
+
+handle status code 200 and 400 specilly for all of it
+```
+
+### First AI Attempt
+
+The AI-generated implementation ran successfully and handled the basic API structure, health endpoint, task listing, validation, updates, statistics, reset, and 404 responses.
+
+However, testing and comparing it with my implementation exposed several differences.
+
+### Concrete Differences
+
+1. **POST status code**
+
+   My implementation returns `201 Created` when a task is created.
+
+   The first AI implementation returned `200 OK`.
+
+   My first prompt emphasized `200` and `400` but did not explicitly require `201`, so the AI made a reasonable but incorrect decision.
+
+2. **DELETE behavior**
+
+   My implementation returns `204 No Content` with an empty body after a successful deletion.
+
+   The AI implementation returned `200 OK` and a JSON object containing the deleted task.
+
+   I did not explicitly specify `204 No Content` in my first prompt.
+
+3. **Filtering, search, and pagination**
+
+   My implementation supports:
+
+   - `GET /tasks?done=true`
+   - `GET /tasks?search=text`
+   - `GET /tasks?limit=N&offset=N`
+
+   The first AI implementation did not include these features because my prompt never asked for them.
+
+4. **Swagger documentation**
+
+   Both versions receive Swagger UI automatically from FastAPI, but my implementation includes explicit summaries and descriptions for the endpoints.
+
+   The first AI version created basic routes without these descriptions because I did not specify documentation quality in the prompt.
+
+5. **Validation**
+
+   The AI used a required Pydantic `title: str` field, while my implementation used an optional field followed by explicit business-rule validation.
+
+   The AI approach is more concise for detecting a missing title, while my implementation gives me more direct control over the exact error response.
+
+### What the AI Did Better
+
+The first AI version used a concise Pydantic model with a required title and had a simpler control flow in parts of the update endpoint.
+
+Reviewing it showed me that some validation responsibilities can be expressed directly in the schema rather than manually.
+
+### What the AI Got Wrong or Missed
+
+The most important misses were the `201` create status, `204` delete status, filtering, search, pagination, and detailed Swagger endpoint descriptions.
+
+These were not random failures: most came directly from requirements that I had not specified precisely enough.
+
+### What My Prompt Forgot
+
+My first prompt did not clearly specify:
+
+- `201 Created` for POST
+- `204 No Content` for DELETE
+- `404` for every unknown task ID
+- in-memory storage
+- filtering
+- search
+- pagination
+- Swagger endpoint descriptions
+- the exact three seed tasks
+- empty response body for DELETE
+
+The first comparison showed that the AI filled these gaps with its own assumptions.
+
+### Rematch Prompt
+
+For the rematch, I rewrote the prompt as a more explicit specification. I defined the storage model, every endpoint, filtering/search/pagination, seed data, JSON error format, validation behavior, and the exact `200`, `201`, `204`, `400`, and `404` status codes.
+
+I also explicitly required Swagger documentation and asked a verifier agent to check the implementation against the specification.
+
+### Rematch Result
+
+The rematch corrected the major specification gaps: task creation uses `201 Created`, deletion uses `204 No Content`, invalid input maps to `400`, unknown IDs map to `404`, and the generated API includes filtering, search, pagination, statistics, reset behavior, and Swagger endpoint descriptions.
+
+The main lesson from the rematch was that a more precise specification produced an implementation much closer to the intended API.
