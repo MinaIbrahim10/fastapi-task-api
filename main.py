@@ -1,19 +1,22 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
 app = FastAPI(
     title="Task API",
-    version="1.0",
+    version="1.1",
     description="A simple in-memory CRUD API for managing tasks."
 )
 
 
-tasks = [
+INITIAL_TASKS = [
     {"id": 1, "title": "Learn FastAPI", "done": False},
     {"id": 2, "title": "Build CRUD API", "done": False},
     {"id": 3, "title": "Push project to GitHub", "done": False},
 ]
+
+tasks = [task.copy() for task in INITIAL_TASKS]
 
 
 class TaskCreate(BaseModel):
@@ -25,6 +28,17 @@ class TaskUpdate(BaseModel):
     done: bool | None = None
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError
+):
+    return JSONResponse(
+        status_code=400,
+        content={"error": "Invalid request body or parameters"}
+    )
+
+
 @app.get(
     "/",
     summary="API information",
@@ -33,8 +47,13 @@ class TaskUpdate(BaseModel):
 def root():
     return {
         "name": "Task API",
-        "version": "1.0",
-        "endpoints": ["/tasks"]
+        "version": "1.1",
+        "endpoints": [
+            "/tasks",
+            "/stats",
+            "/reset",
+            "/health"
+        ]
     }
 
 
@@ -49,11 +68,52 @@ def health():
 
 @app.get(
     "/tasks",
-    summary="List all tasks",
-    description="Returns all tasks currently stored in memory."
+    summary="List tasks",
+    description=(
+        "Returns tasks with optional filtering, search, "
+        "and pagination."
+    )
 )
-def get_tasks():
-    return tasks
+def get_tasks(
+    done: bool | None = None,
+    search: str | None = None,
+    limit: int | None = None,
+    offset: int = 0
+):
+    if offset < 0:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Offset cannot be negative"}
+        )
+
+    if limit is not None and limit <= 0:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Limit must be greater than zero"}
+        )
+
+    result = tasks
+
+    if done is not None:
+        result = [
+            task for task in result
+            if task["done"] == done
+        ]
+
+    if search is not None and search.strip():
+        query = search.strip().lower()
+
+        result = [
+            task for task in result
+            if query in task["title"].lower()
+        ]
+
+    result = result[offset:]
+
+    if limit is not None:
+        result = result[:limit]
+
+    return result
 
 
 @app.get(
@@ -76,7 +136,7 @@ def get_task(task_id: int):
     "/tasks",
     status_code=201,
     summary="Create a new task",
-    description="Creates a new task. The title is required and cannot be empty."
+    description="Creates a new task with done set to false."
 )
 def create_task(task_data: TaskCreate):
     if task_data.title is None or not task_data.title.strip():
@@ -87,7 +147,10 @@ def create_task(task_data: TaskCreate):
 
     title = task_data.title.strip()
 
-    next_id = max(task["id"] for task in tasks) + 1 if tasks else 1
+    next_id = max(
+        (task["id"] for task in tasks),
+        default=0
+    ) + 1
 
     new_task = {
         "id": next_id,
@@ -103,7 +166,7 @@ def create_task(task_data: TaskCreate):
 @app.put(
     "/tasks/{task_id}",
     summary="Update a task",
-    description="Updates the title and/or completion status of an existing task."
+    description="Updates the title and/or done status of a task."
 )
 def update_task(task_id: int, task_data: TaskUpdate):
     task = None
@@ -155,3 +218,38 @@ def delete_task(task_id: int):
         status_code=404,
         content={"error": f"Task {task_id} not found"}
     )
+
+
+@app.get(
+    "/stats",
+    summary="Task statistics",
+    description="Returns total, completed, and open task counts."
+)
+def get_stats():
+    total = len(tasks)
+    completed = sum(1 for task in tasks if task["done"])
+
+    return {
+        "total": total,
+        "done": completed,
+        "open": total - completed
+    }
+
+
+@app.post(
+    "/reset",
+    summary="Reset tasks",
+    description="Restores the original three sample tasks."
+)
+def reset_tasks():
+    tasks.clear()
+
+    tasks.extend(
+        task.copy()
+        for task in INITIAL_TASKS
+    )
+
+    return {
+        "message": "Tasks reset",
+        "tasks": tasks
+    }

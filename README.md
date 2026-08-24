@@ -232,3 +232,60 @@ The project was developed incrementally with separate commits for each implement
 - Full CRUD
 - Swagger UI
 - Documentation and publishing
+## Optional Extras
+
+### Filtering
+
+Tasks can be filtered by completion status:
+
+```bash
+curl "http://localhost:8000/tasks?done=true"
+```
+
+### Search
+
+Tasks can be searched by title:
+
+```bash
+curl "http://localhost:8000/tasks?search=fastapi"
+```
+
+### Pagination
+
+The API supports `limit` and `offset` query parameters:
+
+```bash
+curl "http://localhost:8000/tasks?limit=2&offset=1"
+```
+
+Pagination is important in real APIs because returning an entire large dataset in one response can waste memory, bandwidth, and processing time.
+
+### Statistics
+
+```bash
+curl http://localhost:8000/stats
+```
+
+Example response:
+
+```json
+{
+  "total": 3,
+  "done": 0,
+  "open": 3
+}
+```
+
+### Reset
+
+The original sample tasks can be restored with:
+
+```bash
+curl -X POST http://localhost:8000/reset
+```
+
+### In-Memory Mortality Experiment
+
+I created an additional task and confirmed that it appeared in `GET /tasks`. After stopping and restarting the API server, the added task disappeared and only the initial sample tasks remained.
+
+This happens because the application stores its data only in process memory. In-memory state is lost when the process stops, which is why persistent applications normally use a database or another durable storage system.
