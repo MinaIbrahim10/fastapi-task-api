@@ -225,7 +225,7 @@ def get_task(task_id: int):
     "/tasks",
     status_code=201,
     summary="Create a new task",
-    description="Creates a new task with done set to false."
+    description="Creates a new task in SQLite with done set to false."
 )
 def create_task(task_data: TaskCreate):
     if task_data.title is None or not task_data.title.strip():
@@ -235,21 +235,40 @@ def create_task(task_data: TaskCreate):
         )
 
     title = task_data.title.strip()
+    now = utc_now()
 
-    next_id = max(
-        (task["id"] for task in tasks),
-        default=0
-    ) + 1
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO tasks (
+                title,
+                done,
+                created_at,
+                updated_at
+            )
+            VALUES (?, 0, ?, ?)
+            """,
+            (title, now, now),
+        )
 
-    new_task = {
-        "id": next_id,
-        "title": title,
-        "done": False
+        task_id = cursor.lastrowid
+
+        row = conn.execute(
+            """
+            SELECT id, title, done
+            FROM tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+
+        conn.commit()
+
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "done": bool(row["done"]),
     }
-
-    tasks.append(new_task)
-
-    return new_task
 
 
 @app.put(
