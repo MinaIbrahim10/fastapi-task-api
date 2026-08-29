@@ -538,3 +538,63 @@ Extra features:
 - [x] SQL-backed reset endpoint
 - [x] automated API/database tests
 
+## Additional Stretch Work
+
+### Alphabetical Sorting
+
+Tasks can be sorted alphabetically by title:
+
+```http
+GET /tasks?sort=title
+```
+
+This is implemented directly in SQLite with:
+
+```sql
+ORDER BY title COLLATE NOCASE;
+```
+
+Sorting is performed by the database rather than by a Python loop.
+
+### Database Indexes
+
+The project creates indexes for the columns used by search and filtering:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(title);
+CREATE INDEX IF NOT EXISTS idx_tasks_done ON tasks(done);
+```
+
+An index helps SQLite locate matching rows faster instead of scanning every row in the table, which becomes increasingly important as the dataset grows.
+
+### Transactional Seeding
+
+The initial three-task seed is wrapped in a database transaction.
+
+This means the seed operation is all-or-nothing: either all starting rows are inserted successfully, or the transaction is rolled back instead of leaving the database partially initialized.
+
+### Schema Changes and Migrations
+
+Adding `created_at` and `updated_at` made the database schema more useful, but it also showed that changing a table's shape requires more care than changing an ordinary Python object.
+
+That is why production projects use migrations: they provide a controlled and repeatable way to evolve a database schema while preserving existing data.
+
+### API Compatibility Proof
+
+The original Assignment 1 endpoint behavior has been preserved while the storage layer changed from an in-memory Python list to SQLite.
+
+The automated test suite passes against the SQLite implementation:
+
+```text
+15 passed
+```
+
+The same endpoint contracts still hold:
+
+- GET task endpoints return the same task response shapes.
+- POST still returns `201`.
+- DELETE still returns `204`.
+- Invalid requests still return `400`.
+- Unknown task IDs still return `404`.
+
+Passing the API tests after replacing the storage layer demonstrates that the database is an implementation detail hidden behind the API contract.
