@@ -133,7 +133,7 @@ def health():
     "/tasks",
     summary="List tasks",
     description=(
-        "Returns tasks with optional filtering, search, "
+        "Returns tasks from SQLite with optional filtering, search, "
         "and pagination."
     )
 )
@@ -155,44 +155,70 @@ def get_tasks(
             content={"error": "Limit must be greater than zero"}
         )
 
-    result = tasks
+    query = """
+        SELECT id, title, done
+        FROM tasks
+        WHERE 1 = 1
+    """
+    params = []
 
     if done is not None:
-        result = [
-            task for task in result
-            if task["done"] == done
-        ]
+        query += " AND done = ?"
+        params.append(1 if done else 0)
 
     if search is not None and search.strip():
-        query = search.strip().lower()
+        query += " AND LOWER(title) LIKE ?"
+        params.append(f"%{search.strip().lower()}%")
 
-        result = [
-            task for task in result
-            if query in task["title"].lower()
-        ]
-
-    result = result[offset:]
+    query += " ORDER BY id"
 
     if limit is not None:
-        result = result[:limit]
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+    elif offset > 0:
+        query += " LIMIT -1 OFFSET ?"
+        params.append(offset)
 
-    return result
+    with get_db() as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "done": bool(row["done"]),
+        }
+        for row in rows
+    ]
 
 
 @app.get(
     "/tasks/{task_id}",
     summary="Get a task by ID",
-    description="Returns one task using its ID."
+    description="Returns one task from SQLite using its ID."
 )
 def get_task(task_id: int):
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT id, title, done
+            FROM tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
 
-    return JSONResponse(
-        status_code=404,
-        content={"error": f"Task {task_id} not found"}
-    )
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Task {task_id} not found"}
+        )
+
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "done": bool(row["done"]),
+    }
 
 
 @app.post(
