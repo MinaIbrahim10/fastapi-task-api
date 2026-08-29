@@ -516,3 +516,336 @@ Extras and stretch:
 - [x] secret-management documentation
 
 Stage 7 AI rematch will be documented after the hand-built implementation is complete.
+
+---
+
+## Stage 7 — AI vs Me Rematch
+
+After completing the authentication system manually, I repeated the task with an AI-generated implementation in an isolated directory.
+
+The purpose was not to replace the hand-built implementation. The goal was to compare engineering decisions, identify prompt omissions, test the generated code against the same real Supabase project, and then improve the prompt once.
+
+### Isolation
+
+The AI implementation was generated under:
+
+```text
+ai-auth-version/
+├── main.py
+├── main-v2.py
+├── prompt-v1.txt
+├── prompt-v2.txt
+├── requirements.txt
+├── diff-hand-v1.txt
+├── diff-hand-v2.txt
+└── diff-v1-v2.txt
+```
+
+The production implementation in the repository root was not replaced.
+
+### Prompt V1
+
+The first prompt asked the AI to build:
+
+- signup
+- login
+- logout
+- public route
+- protected profile
+- protected dashboard
+- reusable authentication dependency
+- Supabase token verification
+- Swagger Bearer authentication
+- correct HTTP status codes
+- safe token handling
+
+The complete original prompt is preserved in:
+
+```text
+ai-auth-version/prompt-v1.txt
+```
+
+### V1 Result
+
+V1 passed Python syntax validation but failed at runtime.
+
+The generated implementation expected:
+
+```text
+SUPABASE_ANON_KEY
+```
+
+while the real project configuration used:
+
+```text
+SUPABASE_KEY
+```
+
+The result was:
+
+```text
+RuntimeError:
+SUPABASE_URL and SUPABASE_ANON_KEY must be configured
+```
+
+This demonstrated an important distinction:
+
+```text
+syntax-valid != runtime-ready
+```
+
+The AI also chose raw HTTP calls through `httpx` instead of the Supabase Python SDK.
+
+That implementation was preserved rather than silently repaired.
+
+### Prompt V2 — The Rematch
+
+The second prompt was written after reviewing the concrete V1 failure.
+
+It explicitly required:
+
+```text
+SUPABASE_URL
+SUPABASE_KEY
+```
+
+and prohibited inventing another environment-variable name.
+
+It also explicitly required:
+
+```text
+official Supabase Python SDK
+create_client(...)
+supabase.auth.sign_up(...)
+supabase.auth.sign_in_with_password(...)
+supabase.auth.get_user(...)
+```
+
+The full rematch prompt is preserved in:
+
+```text
+ai-auth-version/prompt-v2.txt
+```
+
+### V2 Runtime Verification
+
+The second AI implementation was tested against the real Supabase project.
+
+Observed results:
+
+```text
+application startup                 -> success
+public route                        -> 200
+protected route without token       -> 401
+real login                          -> 200
+access token returned               -> yes
+refresh token returned              -> yes
+valid access token                  -> 200
+protected dashboard                 -> 200
+tampered access token               -> 401
+Basic authorization header          -> 401
+Bearer without token                -> 401
+Bearer with extra token component   -> 401
+Swagger /docs                       -> 200
+Bearer security scheme              -> present
+logout                              -> 204
+reuse access token after logout     -> 200
+```
+
+No obvious access token or refresh token was found in the AI server logs.
+
+### Hand-Built vs AI — Concrete Differences
+
+#### 1. Configuration compatibility
+
+**AI V1**
+
+Invented a new configuration name:
+
+```text
+SUPABASE_ANON_KEY
+```
+
+This caused the application to fail during startup against the existing environment.
+
+**Hand-built implementation**
+
+Used the established project variables:
+
+```text
+SUPABASE_URL
+SUPABASE_KEY
+```
+
+and was verified against the real project before publication.
+
+**Lesson**
+
+A prompt must specify configuration contracts explicitly. A generated implementation can be syntactically correct while still being operationally incompatible.
+
+---
+
+#### 2. Supabase integration strategy
+
+**AI V1**
+
+Used raw `httpx` requests to Supabase Auth.
+
+**Hand-built implementation**
+
+Used the official Supabase Python SDK and its authentication methods.
+
+**AI V2**
+
+Changed to the SDK only after the rematch prompt explicitly required it.
+
+**Lesson**
+
+"Use Supabase" is ambiguous. If the integration mechanism matters, the prompt needs to state whether the official SDK or direct HTTP API is expected.
+
+---
+
+#### 3. Runtime validation caught a failure syntax checks missed
+
+**AI V1**
+
+```text
+syntax check -> passed
+server startup -> failed
+```
+
+**Hand-built implementation**
+
+Was validated through:
+
+```text
+syntax checks
+automated tests
+real signup
+real login
+real JWT verification
+tampered-token test
+refresh flow
+logout flow
+Swagger/OpenAPI verification
+```
+
+**Lesson**
+
+Compilation or syntax validation is not enough for authentication code. External identity-provider integrations require real runtime checkpoints.
+
+---
+
+#### 4. Logout behavior differed
+
+The hand-built implementation produced:
+
+```text
+logout -> 204
+reuse access token -> 401
+```
+
+The AI V2 implementation produced:
+
+```text
+logout -> 204
+reuse access token -> 200
+```
+
+This is an important authentication-system observation.
+
+JWT access tokens can remain usable depending on session-revocation behavior and how the authentication client performs logout. Therefore, receiving `204` from a logout endpoint alone does not prove that an already-issued access token has immediately become unusable.
+
+The correct behavior should be measured rather than assumed.
+
+---
+
+#### 5. User-data exposure
+
+The hand-built profile response uses an explicit allow-list of safe fields:
+
+```text
+id
+email
+created_at
+```
+
+The AI V2 profile also returned `user_metadata`.
+
+Even when metadata is not secret, returning only fields required by the API contract reduces unnecessary data exposure.
+
+**Lesson**
+
+For security-sensitive responses, explicit response shaping is preferable to returning a broad identity-provider object.
+
+---
+
+#### 6. Scope and defense-in-depth
+
+The hand-built implementation additionally contains:
+
+```text
+403 admin authorization
+refresh-token endpoint
+login failure rate limiting
+strict Bearer parsing tests
+OpenAPI security tests
+real logout experiment
+Git secret-history audit
+31 automated tests
+```
+
+These features were intentionally added as stretch work after the core authentication requirements were stable.
+
+The AI comparison was kept isolated so generated code could not silently regress the production implementation.
+
+### Prompt Engineering Lesson
+
+The largest V1 problem was not that the AI could not write authentication code.
+
+The problem was that the first prompt left important implementation contracts open to interpretation.
+
+The rematch improved the prompt by explicitly specifying:
+
+```text
+exact environment-variable names
+official Supabase SDK
+specific SDK methods
+strict Bearer parsing behavior
+real token verification
+dependency requirements
+file isolation
+security constraints
+```
+
+V2 then progressed from:
+
+```text
+syntax-valid but unable to start
+```
+
+to:
+
+```text
+real login -> 200
+valid token -> 200
+tampered token -> 401
+Swagger security -> working
+logout -> 204
+```
+
+The remaining logout-token behavior also showed why generated authentication code must still be tested empirically.
+
+### Final AI vs Me Conclusion
+
+AI was useful for producing a second implementation quickly, but the hand-built workflow was stronger at:
+
+- environment compatibility
+- runtime verification
+- minimizing returned user data
+- explicit authorization behavior
+- defensive testing
+- secret hygiene
+- understanding logout semantics
+
+The most useful role of AI in this exercise was therefore not replacing engineering judgment, but acting as a second implementation that could be tested, challenged, and improved through better prompting.

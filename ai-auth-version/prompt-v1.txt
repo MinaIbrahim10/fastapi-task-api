@@ -1,0 +1,62 @@
+Build a secure authentication API using Python, FastAPI, and Supabase Auth.
+
+Use Supabase as the Identity Provider. Read configuration from environment variables and do not hard-code credentials.
+
+Required routes:
+
+POST /auth/signup
+- Accept email and password.
+- Return 400 if required input is missing.
+- Register the user through Supabase.
+- Return 201 on success.
+
+POST /auth/login
+- Accept email and password.
+- Return 400 for missing input.
+- Authenticate through Supabase.
+- Return 401 for invalid credentials.
+- Return the access token and refresh token on success.
+
+POST /auth/logout
+- Must be protected.
+- Verify the bearer token first.
+- Sign the user out through Supabase.
+- Return 204 on success.
+
+GET /public/info
+- Public route.
+- No authentication required.
+- Return HTTP 200.
+
+GET /protected/profile
+- Require Authorization: Bearer <token>.
+- Verify the access token with Supabase.
+- Return 401 for missing, malformed, invalid, expired, or tampered tokens.
+- Return safe user metadata on success.
+
+Use one reusable FastAPI authentication dependency for protected routes instead of duplicating token-verification code.
+
+Add a second protected route:
+
+GET /protected/dashboard
+
+It must use the same reusable authentication dependency.
+
+Configure FastAPI Swagger UI with HTTP Bearer authentication so protected routes show lock icons and the Authorize button works.
+
+Use correct status codes:
+- 200 successful login/read
+- 201 successful signup
+- 204 successful logout
+- 400 invalid or missing input
+- 401 authentication failure
+
+Security requirements:
+- Never log access tokens or refresh tokens.
+- Never use a Supabase service_role or secret key.
+- Use only environment variables for configuration.
+- Strictly parse the Bearer prefix.
+- Reject malformed Authorization headers safely.
+- Do not implement password hashing yourself.
+
+Generate the full implementation in one Python file and keep it readable.

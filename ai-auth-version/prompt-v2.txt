@@ -1,0 +1,104 @@
+Build the same authentication API again using Python, FastAPI, and the official Supabase Python SDK.
+
+This is a rematch after reviewing the first AI implementation.
+
+Important environment requirements:
+
+- Use exactly these environment variable names:
+  - SUPABASE_URL
+  - SUPABASE_KEY
+- Do NOT invent or require SUPABASE_ANON_KEY.
+- The application must work with the existing project .env file without renaming variables.
+- Use create_client(SUPABASE_URL, SUPABASE_KEY) from the Supabase Python package.
+- Do not use raw HTTP requests to Supabase Auth.
+- Do not use service_role or secret keys.
+- Do not print configuration secrets or tokens.
+
+Required routes:
+
+POST /auth/signup
+- Accept email and password.
+- Missing or invalid required input -> HTTP 400.
+- Register through supabase.auth.sign_up().
+- Successful signup -> HTTP 201.
+
+POST /auth/login
+- Accept email and password.
+- Missing input -> HTTP 400.
+- Authenticate through supabase.auth.sign_in_with_password().
+- Invalid credentials -> HTTP 401 with:
+  {"error":"Invalid login credentials"}
+- Successful login -> HTTP 200.
+- Return:
+  - access_token
+  - refresh_token
+  - token_type
+  - expires_in
+
+POST /auth/logout
+- Protected route.
+- Reuse the same authentication dependency as the other protected routes.
+- Verify the Bearer access token first.
+- Call Supabase sign out.
+- Successful logout -> HTTP 204 with an empty body.
+
+GET /public/info
+- No authentication.
+- Return HTTP 200 and:
+  {"message":"Welcome stranger! This info is public."}
+
+GET /protected/profile
+- Require Authorization: Bearer <token>.
+- Strictly parse the Bearer header.
+- Reject:
+  - missing Authorization header
+  - Authorization: <token>
+  - Basic <token>
+  - Bearer without a token
+  - Bearer token extra
+- Missing or malformed token -> HTTP 401.
+- Verify the token using supabase.auth.get_user(token).
+- Invalid, expired, or tampered token -> HTTP 401 with:
+  {"error":"Invalid or expired token"}
+- Valid token -> HTTP 200 with safe user metadata only.
+
+GET /protected/dashboard
+- Use the exact same reusable FastAPI authentication dependency.
+- Valid token -> HTTP 200.
+- Invalid token -> HTTP 401.
+
+Swagger / OpenAPI:
+
+- Use FastAPI HTTPBearer.
+- Protected routes must show Bearer security in OpenAPI.
+- Swagger /docs must show the Authorize button and lock icons.
+- Public signup/login/public-info routes must remain unprotected.
+
+Security requirements:
+
+- Never print access tokens.
+- Never print refresh tokens.
+- Never log Authorization headers.
+- Never expose SUPABASE_KEY.
+- Never use service_role.
+- Never trust a token without calling Supabase get_user.
+- Do not implement JWT verification manually.
+- Do not implement password hashing.
+- Do not use an in-memory authentication store.
+
+Dependency requirements:
+
+requirements.txt must include every non-standard Python dependency actually needed by the generated implementation, including:
+- fastapi
+- uvicorn[standard]
+- supabase
+- pydantic
+- python-dotenv if you choose to load .env directly
+
+Write the new implementation to ai-auth-version/main-v2.py.
+
+Do not modify ai-auth-version/main.py because that is the first AI attempt.
+
+Do not modify any file outside ai-auth-version/.
+
+Validate syntax when finished and stop.
