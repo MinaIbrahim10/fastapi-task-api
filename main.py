@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Request, Header
+import time
+from collections import defaultdict, deque
+from fastapi import FastAPI, Request, Header, Depends
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, EmailStr, Field
@@ -50,6 +52,30 @@ def safe_user_payload(user) -> dict:
     }
 
 
+LOGIN_RATE_LIMIT_MAX_FAILURES = 5
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = 60
+
+_failed_login_attempts = defaultdict(deque)
+
+
+def _login_rate_limited(key: str) -> bool:
+    now = time.time()
+    attempts = _failed_login_attempts[key]
+
+    while attempts and now - attempts[0] > LOGIN_RATE_LIMIT_WINDOW_SECONDS:
+        attempts.popleft()
+
+    return len(attempts) >= LOGIN_RATE_LIMIT_MAX_FAILURES
+
+
+def _record_failed_login(key: str) -> None:
+    _failed_login_attempts[key].append(time.time())
+
+
+def _clear_failed_logins(key: str) -> None:
+    _failed_login_attempts.pop(key, None)
+
+
 class AuthCredentials(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
@@ -69,6 +95,10 @@ def auth_user_payload(user) -> dict:
             else str(user.created_at)
         ),
     }
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str | None = None
 
 
 class TaskCreate(BaseModel):
@@ -118,25 +148,12 @@ def health():
     return {"status": "ok"}
 
 
-@app.get(
-    "/public/info",
-    summary="Public information",
-    description="Public endpoint that requires no authentication.",
-)
-def public_info():
-    return {
-        "message": "Welcome stranger! This info is public."
-    }
-
-
-@app.get(
-    "/protected/profile",
-    summary="Protected user profile",
-    description="Returns verified Supabase user metadata.",
-)
-def protected_profile(
+def get_current_user(
     authorization: str | None = Header(default=None),
 ):
+    """
+    Reusable authentication dependency for protected routes.
+    """
     try:
         token = extract_bearer_token(authorization)
     except ValueError:
@@ -160,7 +177,150 @@ def protected_profile(
         )
 
     return {
-        "user": safe_user_payload(response.user)
+        "user": response.user,
+        "token": token,
+    }
+
+
+def require_admin(
+    auth=Depends(get_current_user),
+):
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    user = auth["user"]
+
+    metadata = getattr(user, "app_metadata", None) or {}
+    role = metadata.get("role")
+
+    if role != "admin":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Admin access required"},
+        )
+
+    return auth
+
+
+@app.get(
+    "/public/info",
+    summary="Public information",
+    description="Public endpoint that requires no authentication.",
+)
+def public_info():
+    return {
+        "message": "Welcome stranger! This info is public."
+    }
+
+
+@app.get(
+    "/protected/profile",
+    summary="Protected user profile",
+    description="Returns verified Supabase user metadata.",
+)
+def protected_profile(
+    auth=Depends(get_current_user),
+):
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    return {
+        "user": safe_user_payload(auth["user"])
+    }
+
+
+@app.get(
+    "/protected/dashboard",
+    summary="Protected dashboard",
+    description="Second protected route using the reusable auth dependency.",
+)
+def protected_dashboard(
+    auth=Depends(get_current_user),
+):
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    return {
+        "message": "Authenticated dashboard access granted",
+        "user": safe_user_payload(auth["user"]),
+    }
+
+
+@app.get(
+    "/protected/admin",
+    summary="Admin-only endpoint",
+    description="Returns 403 for authenticated non-admin users.",
+)
+def protected_admin(
+    auth=Depends(require_admin),
+):
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    return {
+        "message": "Admin access granted",
+        "user": safe_user_payload(auth["user"]),
+    }
+
+
+@app.post(
+    "/auth/logout",
+    status_code=204,
+    summary="Log out",
+    description="Ends the current Supabase session.",
+)
+def auth_logout(
+    auth=Depends(get_current_user),
+):
+    if isinstance(auth, JSONResponse):
+        return auth
+
+    try:
+        supabase.auth.sign_out()
+    except Exception:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unable to log out"},
+        )
+
+    return Response(status_code=204)
+
+
+@app.post(
+    "/auth/refresh",
+    summary="Refresh access token",
+    description=(
+        "Uses a refresh token to obtain a fresh short-lived access token."
+    ),
+)
+def auth_refresh(data: RefreshRequest):
+    if data.refresh_token is None or not data.refresh_token.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Refresh token required"},
+        )
+
+    try:
+        response = supabase.auth.refresh_session(
+            data.refresh_token.strip()
+        )
+    except Exception:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid refresh token"},
+        )
+
+    if response.session is None:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid refresh token"},
+        )
+
+    return {
+        "access_token": response.session.access_token,
+        "refresh_token": response.session.refresh_token,
+        "token_type": "bearer",
+        "expires_in": response.session.expires_in,
     }
 
 
@@ -231,6 +391,16 @@ def auth_login(credentials: AuthCredentials):
             content={"error": "Email and password are required"},
         )
 
+    rate_key = email
+
+    if _login_rate_limited(rate_key):
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "Too many failed login attempts. Try again later."
+            },
+        )
+
     try:
         response = supabase.auth.sign_in_with_password(
             {
@@ -239,16 +409,22 @@ def auth_login(credentials: AuthCredentials):
             }
         )
     except Exception:
+        _record_failed_login(rate_key)
+
         return JSONResponse(
             status_code=401,
             content={"error": "Invalid login credentials"},
         )
 
     if response.session is None or response.user is None:
+        _record_failed_login(rate_key)
+
         return JSONResponse(
             status_code=401,
             content={"error": "Invalid login credentials"},
         )
+
+    _clear_failed_logins(rate_key)
 
     return {
         "access_token": response.session.access_token,
