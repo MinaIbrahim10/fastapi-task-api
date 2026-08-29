@@ -1,427 +1,518 @@
-# FastAPI Task API
+# FastAPI Task API — Supabase Authentication & Protected Routes
 
-A simple in-memory CRUD API built with FastAPI.
+A FastAPI backend demonstrating production-style authentication and authorization using Supabase Auth.
 
-The API allows users to create, read, update, and delete tasks. Data is stored only in memory, so tasks are reset whenever the server restarts.
+This branch extends the original Task API with:
 
-## Features
+- user signup
+- user login
+- JWT access tokens
+- refresh tokens
+- protected routes
+- reusable authentication dependencies
+- role-based authorization
+- logout
+- refresh flow
+- login rate limiting
+- Swagger UI Bearer authentication
+- automated security tests
 
-- Create tasks
-- List all tasks
-- Get a task by ID
-- Update task title and completion status
-- Delete tasks
-- Input validation
-- Proper HTTP status codes
-- Health-check endpoint
-- Interactive Swagger UI documentation
+## Architecture
 
-## Tech Stack
+```text
+Client
+  |
+  | email + password
+  v
+FastAPI -----------------> Supabase Auth
+  ^                            |
+  |                            |
+  | JWT / verified user        |
+  +----------------------------+
+```
 
-- Python 3.10+
-- FastAPI
-- Uvicorn
-- Pydantic
-- Swagger UI / OpenAPI
+Supabase acts as the Identity Provider.
+
+Passwords are never stored or hashed by this application.
+
+## Security Model
+
+The API distinguishes authentication from authorization:
+
+```text
+401 Unauthorized
+= the server cannot verify who you are
+
+403 Forbidden
+= the server knows who you are, but you are not allowed
+```
+
+Examples:
+
+```text
+Missing/invalid JWT -> 401
+Authenticated non-admin -> 403
+```
+
+## Environment Variables
+
+Create a local `.env` file:
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-publishable-key
+PORT=8000
+```
+
+The real `.env` file is ignored by Git.
+
+A safe template is provided as:
+
+```text
+.env.example
+```
+
+Never commit:
+
+- service-role keys
+- secret keys
+- access tokens
+- refresh tokens
+- passwords
+
+## Setup
+
+Clone the repository and switch to this branch:
+
+```bash
+git clone https://github.com/MinaIbrahim10/fastapi-task-api.git
+cd fastapi-task-api
+git switch w2-a4-supabase-auth
+```
+
+Create the environment:
+
+```bash
+python3.13 -m venv .venv-auth
+source .venv-auth/bin/activate
+```
+
+Install dependencies:
+
+```bash
+python -m pip install -r requirements-auth.txt
+```
+
+Create `.env` from the example:
+
+```bash
+cp .env.example .env
+```
+
+Then insert your own Supabase project URL and publishable key.
+
+## Run
+
+Start the application with:
+
+```bash
+uvicorn main:app --reload
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## API Reference
+
+| Method | Endpoint | Authentication | Purpose |
+|---|---|---:|---|
+| POST | `/auth/signup` | No | Create a Supabase user |
+| POST | `/auth/login` | No | Login and receive access + refresh tokens |
+| POST | `/auth/logout` | Bearer JWT | End the authenticated session |
+| POST | `/auth/refresh` | Refresh token body | Obtain a fresh access token |
+| GET | `/public/info` | No | Public information |
+| GET | `/protected/profile` | Bearer JWT | Current authenticated user |
+| GET | `/protected/dashboard` | Bearer JWT | Second protected route |
+| GET | `/protected/admin` | Bearer JWT + admin role | Admin-only route |
+| GET | `/auth/health` | No | Safe Supabase configuration health check |
+
+The original Task API endpoints remain available on this branch as well.
+
+## Signup
+
+```bash
+curl -X POST http://127.0.0.1:8000/auth/signup \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"StrongPassword123"}'
+```
+
+Successful signup:
+
+```text
+HTTP 201 Created
+```
+
+## Login
+
+```bash
+curl -X POST http://127.0.0.1:8000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"StrongPassword123"}'
+```
+
+Successful login returns:
+
+```json
+{
+  "access_token": "...",
+  "refresh_token": "...",
+  "token_type": "bearer",
+  "expires_in": 3600
+}
+```
+
+Tokens should never be committed or logged.
+
+## Protected Route
+
+```bash
+curl http://127.0.0.1:8000/protected/profile \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+A verified request returns safe user metadata.
+
+Missing or malformed authentication returns:
+
+```json
+{
+  "error": "Access token required"
+}
+```
+
+An invalid or tampered token returns:
+
+```json
+{
+  "error": "Invalid or expired token"
+}
+```
+
+## Strict Bearer Parsing
+
+The authentication dependency accepts the standard form:
+
+```text
+Authorization: Bearer <token>
+```
+
+Malformed variations are rejected, including:
+
+```text
+Authorization: <token>
+Authorization: Basic <token>
+Authorization: Bearer
+Authorization: Bearer token extra
+```
+
+This prevents accidentally accepting malformed authentication headers.
+
+## Reusable Authentication Dependency
+
+Token verification is implemented once in a reusable FastAPI dependency.
+
+That same guard protects:
+
+```text
+/protected/profile
+/protected/dashboard
+/protected/admin
+/auth/logout
+```
+
+Adding another protected route does not require duplicating authentication logic.
+
+## 401 vs 403
+
+This project demonstrates both authentication and authorization failures.
+
+### 401 Unauthorized
+
+Returned when the identity cannot be trusted:
+
+```text
+missing token
+malformed Bearer header
+expired token
+tampered token
+invalid login
+```
+
+### 403 Forbidden
+
+Returned when authentication succeeds but authorization fails.
+
+For example:
+
+```text
+GET /protected/admin
+```
+
+A normal authenticated user receives:
+
+```json
+{
+  "error": "Admin access required"
+}
+```
+
+with:
+
+```text
+HTTP 403 Forbidden
+```
+
+## Refresh Tokens
+
+Access tokens are intentionally short-lived.
+
+The login response also provides a refresh token that can obtain a new access token:
+
+```bash
+curl -X POST http://127.0.0.1:8000/auth/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh_token":"<REFRESH_TOKEN>"}'
+```
+
+A real Supabase test confirmed:
+
+```text
+refresh request -> 200
+new access token -> created
+new refresh token -> created
+new access token -> protected profile returned 200
+```
+
+Short-lived access tokens reduce the useful lifetime of a stolen access credential, while refresh tokens allow a legitimate client to continue a session without repeatedly asking for a password.
+
+## Logout Experiment
+
+A real logout flow was tested against Supabase.
+
+Observed result:
+
+```text
+login -> 200
+protected route -> 200
+logout -> 204
+reuse the same access token -> 401
+```
+
+For this Supabase session, the logged-out token was rejected on the next verified request.
+
+The important architectural point is that logout behavior depends on how the Identity Provider validates and revokes sessions. Applications should never assume that deleting a token on the client alone is equivalent to server-side session invalidation.
+
+## Login Rate Limiting
+
+Repeated failed login attempts are rate limited.
+
+Current development policy:
+
+```text
+5 failed attempts within 60 seconds
+```
+
+Further attempts receive:
+
+```text
+HTTP 429 Too Many Requests
+```
+
+Example response:
+
+```json
+{
+  "error": "Too many failed login attempts. Try again later."
+}
+```
+
+Rate limiting belongs near login because authentication endpoints are common brute-force targets.
+
+## JWT Notes
+
+A JWT contains signed claims about a user/session.
+
+Common claims can include:
+
+```text
+subject/user ID
+issuer
+audience
+issued-at time
+expiry time
+authentication metadata
+```
+
+A JWT payload is encoded, not encrypted.
+
+Anyone who possesses the token can decode and read its payload, which is why application secrets, passwords, and private credentials must never be stored inside JWT claims.
+
+The signature protects integrity: modifying even one character causes verification to fail.
+
+This was verified manually by modifying a real Supabase access token:
+
+```text
+valid token -> HTTP 200
+tampered token -> HTTP 401
+```
+
+## Swagger UI
+
+FastAPI exposes interactive documentation at:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Protected routes use the `SupabaseJWT` HTTP Bearer security scheme.
+
+Swagger displays lock icons beside protected routes and provides an **Authorize** button.
+
+![Swagger UI with Supabase Bearer authentication](screenshots/auth-swagger.png)
+
+## Real End-to-End Verification
+
+The implementation was tested with a real Supabase project.
+
+Verified flows:
+
+```text
+real signup -> success
+real login -> 200
+access token returned -> yes
+refresh token returned -> yes
+
+protected profile with valid token -> 200
+protected profile with tampered token -> 401
+
+protected dashboard -> 200
+admin route with normal user -> 403
+
+refresh flow -> 200
+refreshed access token -> protected profile 200
+
+logout -> 204
+reuse token after logout -> 401
+
+invalid refresh token -> 401
+```
+
+## Automated Tests
+
+Run:
+
+```bash
+python -m pytest -q
+```
+
+Current verified result:
+
+```text
+31 passed
+```
+
+Tests cover:
+
+- signup
+- login
+- invalid credentials
+- input validation
+- public route
+- missing bearer token
+- malformed bearer headers
+- valid token verification
+- invalid token rejection
+- reusable protected-route dependency
+- dashboard protection
+- admin authorization
+- 403 behavior
+- logout
+- refresh flow
+- invalid refresh tokens
+- login rate limiting
+- Swagger UI availability
+- OpenAPI Bearer security scheme
+- protected-route lock metadata
+- public-route OpenAPI behavior
+
+## Security Decisions
+
+### No custom password hashing
+
+Supabase handles password storage and cryptography.
+
+The backend does not implement password hashing itself.
+
+### Token Safety
+
+Access tokens and refresh tokens are never intentionally printed in application logs or committed to the repository.
+
+### Publishable Key Only
+
+The project uses the Supabase publishable/anon-style application key.
+
+A `service_role` or secret key must never be used for this exercise.
+
+### Secrets Stay Outside Git
+
+`.env` is ignored and `.env.example` contains placeholders only.
 
 ## Project Structure
 
 ```text
 fastapi-task-api/
 ├── main.py
-├── requirements.txt
+├── auth_config.py
+├── requirements-auth.txt
+├── .env.example
+├── .gitignore
 ├── README.md
-└── docs/
-    └── swagger.png
+├── screenshots/
+│   └── auth-swagger.png
+└── tests/
+    ├── test_auth_stage1.py
+    ├── test_auth_stage23.py
+    ├── test_auth_stage4_extras.py
+    └── test_auth_stage5_swagger.py
 ```
 
-## Installation
-
-Clone the repository:
-
-```bash
-git clone https://github.com/MinaIbrahim10/fastapi-task-api.git
-cd fastapi-task-api
-```
-
-Create a virtual environment:
-
-```bash
-python -m venv .venv
-```
-
-Activate it:
-
-```bash
-source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Run the API
-
-Start the development server:
-
-```bash
-uvicorn main:app --reload
-```
-
-The API will be available at:
-
-```text
-http://localhost:8000
-```
-
-Swagger UI:
-
-```text
-http://localhost:8000/docs
-```
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/` | API information |
-| GET | `/health` | Health check |
-| GET | `/tasks` | List all tasks |
-| GET | `/tasks/{task_id}` | Get a task by ID |
-| POST | `/tasks` | Create a new task |
-| PUT | `/tasks/{task_id}` | Update an existing task |
-| DELETE | `/tasks/{task_id}` | Delete a task |
-
-## Example Task
-
-```json
-{
-  "id": 1,
-  "title": "Learn FastAPI",
-  "done": false
-}
-```
-
-## Create a Task
-
-```bash
-curl -i -X POST http://localhost:8000/tasks \
--H "Content-Type: application/json" \
--d '{"title":"Buy milk"}'
-```
-
-Example response:
-
-```text
-HTTP/1.1 201 Created
-content-type: application/json
-
-{"id":4,"title":"Buy milk","done":false}
-```
-
-## Update a Task
-
-```bash
-curl -i -X PUT http://localhost:8000/tasks/4 \
--H "Content-Type: application/json" \
--d '{"title":"Buy groceries","done":true}'
-```
-
-Example response:
-
-```json
-{
-  "id": 4,
-  "title": "Buy groceries",
-  "done": true
-}
-```
-
-## Delete a Task
-
-```bash
-curl -i -X DELETE http://localhost:8000/tasks/4
-```
-
-Successful deletion returns:
-
-```text
-HTTP/1.1 204 No Content
-```
-
-## Validation
-
-Creating a task without a title:
-
-```bash
-curl -i -X POST http://localhost:8000/tasks \
--H "Content-Type: application/json" \
--d '{}'
-```
-
-Returns:
-
-```text
-HTTP/1.1 400 Bad Request
-```
-
-```json
-{
-  "error": "Title is required and cannot be empty"
-}
-```
-
-Requesting a task that does not exist:
-
-```bash
-curl -i http://localhost:8000/tasks/99
-```
-
-Returns:
-
-```text
-HTTP/1.1 404 Not Found
-```
-
-```json
-{
-  "error": "Task 99 not found"
-}
-```
-
-## Status Codes
-
-| Code | Meaning |
-|---|---|
-| `200 OK` | Successful read or update |
-| `201 Created` | Task successfully created |
-| `204 No Content` | Task successfully deleted |
-| `400 Bad Request` | Invalid request body |
-| `404 Not Found` | Requested task does not exist |
-
-## Swagger UI
-
-FastAPI automatically generates interactive API documentation using OpenAPI.
-
-Open:
-
-```text
-http://localhost:8000/docs
-```
-
-The full CRUD cycle can be tested directly from Swagger UI using the **Try it out** button.
-
-![Swagger UI](docs/swagger.png)
-
-## Data Storage
-
-This project intentionally uses in-memory storage instead of a database.
-
-Tasks exist only while the application is running. Restarting the server resets the task list to the initial sample data.
-
-## Git History
-
-The project was developed incrementally with separate commits for each implementation stage:
-
-- Hello server
-- Root and health endpoints
-- Read endpoints and 404 handling
-- Create endpoint with validation
-- Full CRUD
-- Swagger UI
-- Documentation and publishing
-## Optional Extras
-
-### Filtering
-
-Tasks can be filtered by completion status:
-
-```bash
-curl "http://localhost:8000/tasks?done=true"
-```
-
-### Search
-
-Tasks can be searched by title:
-
-```bash
-curl "http://localhost:8000/tasks?search=fastapi"
-```
-
-### Pagination
-
-The API supports `limit` and `offset` query parameters:
-
-```bash
-curl "http://localhost:8000/tasks?limit=2&offset=1"
-```
-
-Pagination is important in real APIs because returning an entire large dataset in one response can waste memory, bandwidth, and processing time.
-
-### Statistics
-
-```bash
-curl http://localhost:8000/stats
-```
-
-Example response:
-
-```json
-{
-  "total": 3,
-  "done": 0,
-  "open": 3
-}
-```
-
-### Reset
-
-The original sample tasks can be restored with:
-
-```bash
-curl -X POST http://localhost:8000/reset
-```
-
-### In-Memory Mortality Experiment
-
-I created an additional task and confirmed that it appeared in `GET /tasks`. After stopping and restarting the API server, the added task disappeared and only the initial sample tasks remained.
-
-This happens because the application stores its data only in process memory. In-memory state is lost when the process stops, which is why persistent applications normally use a database or another durable storage system.
-## AI vs Me
-
-### First Prompt
-
-I wrote the following prompt from memory after completing the original API:
-
-```text
-act with 3 agents 
-first build a full fastapi appliction useing python 3.13+ it is about task u must add health endpoint to check API HEALTH GET
-/ endpoint to get API information and it must return that 
-
-{
-  "name": "Task API",
-  "version": "1.1",
-  "endpoints": [
-    "/tasks",
-    "/stats",
-    "/reset",
-    "/health"
-  ]
-}
-
-and endpoint to list all tasks GET
-and endpoint to create new task it takes title and it must retrn the task handle 200 and 400 for evertything also hadnle 422 to act as 400 POST
-
-and endpont TO GET TAKS BY ID IT TEKS THE ID AND RETURN THE TASK INFORMATION GET
-an endpoitn to modify a tak takes ID mandatory and cahnge it information
-{
-  "title": "string",
-  "done": true
-} PUT
-
-a delete endpoint by task id DELETE
-
-get statcks about taks get nothing and it retrns this
-{
-  "total": 3,
-  "done": 0,
-  "open": 3
-}
-
-reset task to rest all tasks idk modify it if something msisin POST
-
-the seond agent must create the full readme.md and reqiremtns.txt and give instructioncomamnds how to init and oush to github
-
-the third agent must verify the whole process
-
-handle status code 200 and 400 specilly for all of it
-```
-
-### First AI Attempt
-
-The AI-generated implementation ran successfully and handled the basic API structure, health endpoint, task listing, validation, updates, statistics, reset, and 404 responses.
-
-However, testing and comparing it with my implementation exposed several differences.
-
-### Concrete Differences
-
-1. **POST status code**
-
-   My implementation returns `201 Created` when a task is created.
-
-   The first AI implementation returned `200 OK`.
-
-   My first prompt emphasized `200` and `400` but did not explicitly require `201`, so the AI made a reasonable but incorrect decision.
-
-2. **DELETE behavior**
-
-   My implementation returns `204 No Content` with an empty body after a successful deletion.
-
-   The AI implementation returned `200 OK` and a JSON object containing the deleted task.
-
-   I did not explicitly specify `204 No Content` in my first prompt.
-
-3. **Filtering, search, and pagination**
-
-   My implementation supports:
-
-   - `GET /tasks?done=true`
-   - `GET /tasks?search=text`
-   - `GET /tasks?limit=N&offset=N`
-
-   The first AI implementation did not include these features because my prompt never asked for them.
-
-4. **Swagger documentation**
-
-   Both versions receive Swagger UI automatically from FastAPI, but my implementation includes explicit summaries and descriptions for the endpoints.
-
-   The first AI version created basic routes without these descriptions because I did not specify documentation quality in the prompt.
-
-5. **Validation**
-
-   The AI used a required Pydantic `title: str` field, while my implementation used an optional field followed by explicit business-rule validation.
-
-   The AI approach is more concise for detecting a missing title, while my implementation gives me more direct control over the exact error response.
-
-### What the AI Did Better
-
-The first AI version used a concise Pydantic model with a required title and had a simpler control flow in parts of the update endpoint.
-
-Reviewing it showed me that some validation responsibilities can be expressed directly in the schema rather than manually.
-
-### What the AI Got Wrong or Missed
-
-The most important misses were the `201` create status, `204` delete status, filtering, search, pagination, and detailed Swagger endpoint descriptions.
-
-These were not random failures: most came directly from requirements that I had not specified precisely enough.
-
-### What My Prompt Forgot
-
-My first prompt did not clearly specify:
-
-- `201 Created` for POST
-- `204 No Content` for DELETE
-- `404` for every unknown task ID
-- in-memory storage
-- filtering
-- search
-- pagination
-- Swagger endpoint descriptions
-- the exact three seed tasks
-- empty response body for DELETE
-
-The first comparison showed that the AI filled these gaps with its own assumptions.
-
-### Rematch Prompt
-
-For the rematch, I rewrote the prompt as a more explicit specification. I defined the storage model, every endpoint, filtering/search/pagination, seed data, JSON error format, validation behavior, and the exact `200`, `201`, `204`, `400`, and `404` status codes.
-
-I also explicitly required Swagger documentation and asked a verifier agent to check the implementation against the specification.
-
-### Rematch Result
-
-The rematch corrected the major specification gaps: task creation uses `201 Created`, deletion uses `204 No Content`, invalid input maps to `400`, unknown IDs map to `404`, and the generated API includes filtering, search, pagination, statistics, reset behavior, and Swagger endpoint descriptions.
-
-The main lesson from the rematch was that a more precise specification produced an implementation much closer to the intended API.
+## Assignment Progress
+
+Core stages:
+
+- [x] Stage 0 — Supabase configuration
+- [x] Stage 1 — Signup and login
+- [x] Stage 2 — Public and protected gates
+- [x] Stage 3 — Real JWT verification
+- [x] Stage 4 — Reusable auth dependency and logout
+- [x] Stage 5 — Swagger Bearer authentication
+- [x] Stage 6 — README and publication preparation
+
+Extras and stretch:
+
+- [x] strict Bearer parsing
+- [x] second protected route
+- [x] real 403 authorization case
+- [x] refresh-token flow
+- [x] real logout experiment
+- [x] login brute-force rate limiting
+- [x] JWT security explanation
+- [x] automated auth tests
+- [x] OpenAPI security tests
+- [x] safe auth configuration health endpoint
+- [x] secret-management documentation
+
+Stage 7 AI rematch will be documented after the hand-built implementation is complete.
