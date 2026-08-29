@@ -135,3 +135,93 @@ if __name__ == "__main__":
     print("Database initialized.")
     print("Seed inserted:", seeded)
     print("Database health:", database_health())
+
+
+def list_tasks(
+    done: bool | None = None,
+    search: str | None = None,
+    sort: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+):
+    query = """
+        SELECT id, title, done
+        FROM tasks
+        WHERE TRUE
+    """
+
+    params = []
+
+    if done is not None:
+        query += " AND done = %s"
+        params.append(done)
+
+    if search is not None and search.strip():
+        query += " AND LOWER(title) LIKE %s"
+        params.append(
+            f"%{search.strip().lower()}%"
+        )
+
+    if sort is None:
+        query += " ORDER BY id"
+
+    elif sort == "title":
+        query += " ORDER BY LOWER(title), id"
+
+    else:
+        raise ValueError(
+            "Sort must be 'title'"
+        )
+
+    if limit is not None:
+        query += " LIMIT %s OFFSET %s"
+        params.extend([
+            limit,
+            offset,
+        ])
+
+    elif offset > 0:
+        query += " OFFSET %s"
+        params.append(offset)
+
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                query,
+                params,
+            )
+
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "done": bool(row["done"]),
+        }
+        for row in rows
+    ]
+
+
+def get_task_by_id(task_id: int):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, title, done
+                FROM tasks
+                WHERE id = %s
+                """,
+                (task_id,),
+            )
+
+            row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "done": bool(row["done"]),
+    }

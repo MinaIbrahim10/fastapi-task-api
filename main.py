@@ -5,6 +5,11 @@ from datetime import datetime, timezone
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
+from postgres_repository import (
+    initialize_database as initialize_postgres_database,
+    list_tasks as repository_list_tasks,
+    get_task_by_id as repository_get_task_by_id,
+)
 
 
 DB_PATH = Path("tasks.db")
@@ -78,7 +83,7 @@ def initialize_database():
                 raise
 
 
-initialize_database()
+initialize_postgres_database()
 
 app = FastAPI(
     title="Task API",
@@ -138,8 +143,8 @@ def health():
     "/tasks",
     summary="List tasks",
     description=(
-        "Returns tasks from SQLite with optional filtering, search, "
-        "and pagination."
+        "Returns tasks from PostgreSQL with optional filtering, search, "
+        "sorting, and pagination."
     )
 )
 def get_tasks(
@@ -161,78 +166,39 @@ def get_tasks(
             content={"error": "Limit must be greater than zero"}
         )
 
-    query = """
-        SELECT id, title, done
-        FROM tasks
-        WHERE 1 = 1
-    """
-    params = []
-
-    if done is not None:
-        query += " AND done = ?"
-        params.append(1 if done else 0)
-
-    if search is not None and search.strip():
-        query += " AND LOWER(title) LIKE ?"
-        params.append(f"%{search.strip().lower()}%")
-
-    if sort is None:
-        query += " ORDER BY id"
-    elif sort == "title":
-        query += " ORDER BY title COLLATE NOCASE, id"
-    else:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Sort must be 'title'"}
+    try:
+        return repository_list_tasks(
+            done=done,
+            search=search,
+            sort=sort,
+            limit=limit,
+            offset=offset,
         )
 
-    if limit is not None:
-        query += " LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-    elif offset > 0:
-        query += " LIMIT -1 OFFSET ?"
-        params.append(offset)
-
-    with get_db() as conn:
-        rows = conn.execute(query, params).fetchall()
-
-    return [
-        {
-            "id": row["id"],
-            "title": row["title"],
-            "done": bool(row["done"]),
-        }
-        for row in rows
-    ]
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": str(exc)}
+        )
 
 
 @app.get(
     "/tasks/{task_id}",
     summary="Get a task by ID",
-    description="Returns one task from SQLite using its ID."
+    description="Returns one task from PostgreSQL using its ID."
 )
 def get_task(task_id: int):
-    with get_db() as conn:
-        row = conn.execute(
-            """
-            SELECT id, title, done
-            FROM tasks
-            WHERE id = ?
-            """,
-            (task_id,),
-        ).fetchone()
+    task = repository_get_task_by_id(
+        task_id
+    )
 
-    if row is None:
+    if task is None:
         return JSONResponse(
             status_code=404,
             content={"error": f"Task {task_id} not found"}
         )
 
-    return {
-        "id": row["id"],
-        "title": row["title"],
-        "done": bool(row["done"]),
-    }
+    return task
 
 
 @app.post(
