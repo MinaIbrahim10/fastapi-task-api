@@ -3,6 +3,8 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
+from auth_config import auth_config_status, supabase
+
 app = FastAPI(
     title="Task API",
     version="1.1",
@@ -64,6 +66,21 @@ def root():
 )
 def health():
     return {"status": "ok"}
+
+
+@app.get(
+    "/auth/health",
+    summary="Authentication service health",
+    description=(
+        "Confirms that the backend loaded its Supabase "
+        "configuration without exposing credentials."
+    ),
+)
+def auth_health():
+    return {
+        "status": "ok",
+        **auth_config_status(),
+    }
 
 
 @app.get(
