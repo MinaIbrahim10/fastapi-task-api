@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Header
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, EmailStr, Field
@@ -19,6 +19,35 @@ INITIAL_TASKS = [
 ]
 
 tasks = [task.copy() for task in INITIAL_TASKS]
+
+
+def extract_bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        raise ValueError("missing")
+
+    parts = authorization.strip().split()
+
+    if len(parts) != 2:
+        raise ValueError("malformed")
+
+    scheme, token = parts
+
+    if scheme.lower() != "bearer" or not token:
+        raise ValueError("malformed")
+
+    return token
+
+
+def safe_user_payload(user) -> dict:
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "created_at": (
+            user.created_at.isoformat()
+            if hasattr(user.created_at, "isoformat")
+            else str(user.created_at)
+        ),
+    }
 
 
 class AuthCredentials(BaseModel):
@@ -87,6 +116,52 @@ def root():
 )
 def health():
     return {"status": "ok"}
+
+
+@app.get(
+    "/public/info",
+    summary="Public information",
+    description="Public endpoint that requires no authentication.",
+)
+def public_info():
+    return {
+        "message": "Welcome stranger! This info is public."
+    }
+
+
+@app.get(
+    "/protected/profile",
+    summary="Protected user profile",
+    description="Returns verified Supabase user metadata.",
+)
+def protected_profile(
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token = extract_bearer_token(authorization)
+    except ValueError:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Access token required"},
+        )
+
+    try:
+        response = supabase.auth.get_user(token)
+    except Exception:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid or expired token"},
+        )
+
+    if response.user is None:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid or expired token"},
+        )
+
+    return {
+        "user": safe_user_payload(response.user)
+    }
 
 
 @app.post(
