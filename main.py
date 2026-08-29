@@ -274,58 +274,104 @@ def create_task(task_data: TaskCreate):
 @app.put(
     "/tasks/{task_id}",
     summary="Update a task",
-    description="Updates the title and/or done status of a task."
+    description="Updates an existing task in SQLite."
 )
 def update_task(task_id: int, task_data: TaskUpdate):
-    task = None
-
-    for item in tasks:
-        if item["id"] == task_id:
-            task = item
-            break
-
-    if task is None:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"Task {task_id} not found"}
-        )
-
     if task_data.title is None and task_data.done is None:
         return JSONResponse(
             status_code=400,
             content={"error": "At least one field is required"}
         )
 
-    if task_data.title is not None:
-        if not task_data.title.strip():
+    if task_data.title is not None and not task_data.title.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Title cannot be empty"}
+        )
+
+    with get_db() as conn:
+        existing = conn.execute(
+            """
+            SELECT id, title, done
+            FROM tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+
+        if existing is None:
             return JSONResponse(
-                status_code=400,
-                content={"error": "Title cannot be empty"}
+                status_code=404,
+                content={"error": f"Task {task_id} not found"}
             )
 
-        task["title"] = task_data.title.strip()
+        new_title = (
+            task_data.title.strip()
+            if task_data.title is not None
+            else existing["title"]
+        )
 
-    if task_data.done is not None:
-        task["done"] = task_data.done
+        new_done = (
+            1 if task_data.done
+            else 0 if task_data.done is not None
+            else existing["done"]
+        )
 
-    return task
+        now = utc_now()
+
+        conn.execute(
+            """
+            UPDATE tasks
+            SET title = ?, done = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (new_title, new_done, now, task_id),
+        )
+
+        row = conn.execute(
+            """
+            SELECT id, title, done
+            FROM tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+
+        conn.commit()
+
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "done": bool(row["done"]),
+    }
 
 
 @app.delete(
     "/tasks/{task_id}",
     summary="Delete a task",
-    description="Deletes an existing task by ID."
+    description="Deletes an existing task from SQLite."
 )
 def delete_task(task_id: int):
-    for index, task in enumerate(tasks):
-        if task["id"] == task_id:
-            tasks.pop(index)
-            return Response(status_code=204)
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
 
-    return JSONResponse(
-        status_code=404,
-        content={"error": f"Task {task_id} not found"}
-    )
+        if existing is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Task {task_id} not found"}
+            )
+
+        conn.execute(
+            "DELETE FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+
+        conn.commit()
+
+    return Response(status_code=204)
 
 
 @app.get(
