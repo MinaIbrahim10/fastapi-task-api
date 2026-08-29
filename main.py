@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 from auth_config import auth_config_status, supabase
 
@@ -19,6 +19,27 @@ INITIAL_TASKS = [
 ]
 
 tasks = [task.copy() for task in INITIAL_TASKS]
+
+
+class AuthCredentials(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def auth_user_payload(user) -> dict:
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "created_at": (
+            user.created_at.isoformat()
+            if hasattr(user.created_at, "isoformat")
+            else str(user.created_at)
+        ),
+    }
 
 
 class TaskCreate(BaseModel):
@@ -66,6 +87,101 @@ def root():
 )
 def health():
     return {"status": "ok"}
+
+
+@app.post(
+    "/auth/signup",
+    status_code=201,
+    summary="Create a user account",
+    description="Registers a new user through Supabase Auth.",
+)
+def auth_signup(credentials: AuthCredentials):
+    email = normalize_email(str(credentials.email))
+    password = credentials.password
+
+    if not email or not password.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Email and password are required"},
+        )
+
+    try:
+        response = supabase.auth.sign_up(
+            {
+                "email": email,
+                "password": password,
+            }
+        )
+    except Exception as exc:
+        message = str(exc).lower()
+
+        if "already registered" in message or "already exists" in message:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "User already registered"},
+            )
+
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Unable to create account"},
+        )
+
+    if response.user is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Unable to create account"},
+        )
+
+    return {
+        "user": auth_user_payload(response.user),
+        "email_confirmation_required": response.session is None,
+    }
+
+
+@app.post(
+    "/auth/login",
+    summary="Log in",
+    description=(
+        "Authenticates a user with Supabase and returns "
+        "access and refresh tokens."
+    ),
+)
+def auth_login(credentials: AuthCredentials):
+    email = normalize_email(str(credentials.email))
+    password = credentials.password
+
+    if not email or not password.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Email and password are required"},
+        )
+
+    try:
+        response = supabase.auth.sign_in_with_password(
+            {
+                "email": email,
+                "password": password,
+            }
+        )
+    except Exception:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid login credentials"},
+        )
+
+    if response.session is None or response.user is None:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Invalid login credentials"},
+        )
+
+    return {
+        "access_token": response.session.access_token,
+        "refresh_token": response.session.refresh_token,
+        "token_type": "bearer",
+        "expires_in": response.session.expires_in,
+        "user": auth_user_payload(response.user),
+    }
 
 
 @app.get(
