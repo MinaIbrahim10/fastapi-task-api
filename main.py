@@ -1,7 +1,8 @@
 import time
 from collections import defaultdict, deque
-from fastapi import FastAPI, Request, Header, Depends
+from fastapi import FastAPI, Request, Header, Depends, Security
 from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, EmailStr, Field
 
@@ -50,6 +51,16 @@ def safe_user_payload(user) -> dict:
             else str(user.created_at)
         ),
     }
+
+
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="SupabaseJWT",
+    description=(
+        "Paste the Supabase access token returned by POST /auth/login. "
+        "Swagger automatically sends it as Authorization: Bearer <token>."
+    ),
+)
 
 
 LOGIN_RATE_LIMIT_MAX_FAILURES = 5
@@ -150,6 +161,9 @@ def health():
 
 def get_current_user(
     authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Security(
+        bearer_scheme
+    ),
 ):
     """
     Reusable authentication dependency for protected routes.
