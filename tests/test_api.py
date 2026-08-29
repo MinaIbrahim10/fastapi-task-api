@@ -180,3 +180,47 @@ def test_reset_restores_seed_tasks():
         ).fetchone()[0]
 
     assert count == 3
+
+
+def test_sort_tasks_alphabetically():
+    client.post("/tasks", json={"title": "Zebra"})
+    client.post("/tasks", json={"title": "apple"})
+
+    response = client.get(
+        "/tasks",
+        params={"sort": "title"},
+    )
+
+    assert response.status_code == 200
+
+    titles = [task["title"] for task in response.json()]
+
+    assert titles == sorted(titles, key=str.lower)
+
+
+def test_invalid_sort_returns_400():
+    response = client.get(
+        "/tasks",
+        params={"sort": "random"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "Sort must be 'title'"
+    }
+
+
+def test_search_and_filter_indexes_exist():
+    with main.get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'index'
+            """
+        ).fetchall()
+
+    names = {row["name"] for row in rows}
+
+    assert "idx_tasks_title" in names
+    assert "idx_tasks_done" in names

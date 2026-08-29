@@ -36,6 +36,14 @@ def initialize_database():
             """
         )
 
+        # Indexes support common search/filter access patterns.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(title)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_done ON tasks(done)"
+        )
+
         count = conn.execute(
             "SELECT COUNT(*) AS count FROM tasks"
         ).fetchone()["count"]
@@ -43,25 +51,31 @@ def initialize_database():
         if count == 0:
             now = utc_now()
 
-            conn.executemany(
-                """
-                INSERT INTO tasks (
-                    id,
-                    title,
-                    done,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                [
-                    (1, "Learn FastAPI", 0, now, now),
-                    (2, "Build CRUD API", 0, now, now),
-                    (3, "Push project to GitHub", 0, now, now),
-                ],
-            )
+            try:
+                conn.execute("BEGIN")
 
-        conn.commit()
+                conn.executemany(
+                    """
+                    INSERT INTO tasks (
+                        id,
+                        title,
+                        done,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (1, "Learn FastAPI", 0, now, now),
+                        (2, "Build CRUD API", 0, now, now),
+                        (3, "Push project to GitHub", 0, now, now),
+                    ],
+                )
+
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
 
 initialize_database()
@@ -71,15 +85,6 @@ app = FastAPI(
     version="1.1",
     description="A simple in-memory CRUD API for managing tasks."
 )
-
-
-INITIAL_TASKS = [
-    {"id": 1, "title": "Learn FastAPI", "done": False},
-    {"id": 2, "title": "Build CRUD API", "done": False},
-    {"id": 3, "title": "Push project to GitHub", "done": False},
-]
-
-tasks = [task.copy() for task in INITIAL_TASKS]
 
 
 class TaskCreate(BaseModel):
@@ -140,6 +145,7 @@ def health():
 def get_tasks(
     done: bool | None = None,
     search: str | None = None,
+    sort: str | None = None,
     limit: int | None = None,
     offset: int = 0
 ):
@@ -170,7 +176,15 @@ def get_tasks(
         query += " AND LOWER(title) LIKE ?"
         params.append(f"%{search.strip().lower()}%")
 
-    query += " ORDER BY id"
+    if sort is None:
+        query += " ORDER BY id"
+    elif sort == "title":
+        query += " ORDER BY title COLLATE NOCASE, id"
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Sort must be 'title'"}
+        )
 
     if limit is not None:
         query += " LIMIT ? OFFSET ?"
