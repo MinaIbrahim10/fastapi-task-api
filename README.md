@@ -598,3 +598,510 @@ The same endpoint contracts still hold:
 - Unknown task IDs still return `404`.
 
 Passing the API tests after replacing the storage layer demonstrates that the database is an implementation detail hidden behind the API contract.
+
+## AI vs Me — Stage 6 Rematch
+
+After completing the SQLite migration by hand, I asked an AI coding assistant to perform the same migration independently in the isolated `ai-version/` directory.
+
+The hand-built implementation remained untouched during this experiment.
+
+### First AI Prompt
+
+```text
+Act as a backend developer working with Python, FastAPI, and SQLite.
+
+I have an existing in-memory CRUD Task API and I want you to migrate its storage layer to SQLite without changing the public API behavior.
+
+Requirements:
+
+- Keep the same CRUD endpoints:
+  - GET /tasks
+  - GET /tasks/{id}
+  - POST /tasks
+  - PUT /tasks/{id}
+  - DELETE /tasks/{id}
+
+- Use Python's built-in sqlite3 library.
+- Store data in a local SQLite database file named tasks.db.
+- Create a tasks table automatically if it does not exist.
+- The tasks table must include id, title, and done.
+- Seed exactly three example tasks only if the table is empty.
+- Restarting the server must not duplicate seeded tasks.
+- All CRUD operations must use SQLite.
+- Missing or empty titles must return HTTP 400.
+- Unknown task IDs must return HTTP 404.
+- Successful creation must return HTTP 201.
+- Successful deletion must return HTTP 204.
+- Use parameterized SQL queries with ? placeholders.
+- Data must survive server restarts.
+- Do not use an ORM or unnecessary dependencies.
+```
+
+### First AI Attempt
+
+The first AI implementation was stored in:
+
+```text
+ai-version/main.py
+```
+
+I ran it independently from my hand-built version and tested the complete CRUD and persistence flow.
+
+The first AI version successfully:
+
+- created its SQLite database automatically
+- created and seeded the tasks table
+- avoided duplicate seed rows after restart
+- returned `200` for reads and updates
+- returned `201` for creation
+- returned `204` for deletion
+- returned `400` for invalid input
+- returned `404` for unknown task IDs
+- persisted a newly created task after restarting the server
+- used parameterized SQL queries
+
+After creating one additional task and restarting the application, the database contained exactly four rows. This proved that persistence worked and the seed data was not duplicated.
+
+### What the AI Did Better
+
+The AI generated a much smaller implementation focused directly on the required CRUD migration.
+
+Its storage flow was easy to follow:
+
+```text
+request -> SQL query -> SQLite -> response
+```
+
+It also produced working parameterized SQL and persistence on its first generated attempt.
+
+This demonstrated how quickly an AI assistant can create a compact baseline when the specification is focused.
+
+### What the AI Got Wrong or Quietly Changed
+
+The first attempt also revealed several problems.
+
+#### 1. It changed the seed data
+
+My original seed tasks were:
+
+```text
+Learn FastAPI
+Build CRUD API
+Push project to GitHub
+```
+
+The first AI version generated:
+
+```text
+Learn FastAPI
+Build Task API
+Test the API
+```
+
+The database worked, but the existing application's data was not preserved exactly.
+
+#### 2. It changed an error response
+
+For an invalid POST request, the first AI implementation returned:
+
+```json
+{"error":"Invalid request data"}
+```
+
+My hand-built version returned:
+
+```json
+{"error":"Title is required and cannot be empty"}
+```
+
+The HTTP status code was correct, but the response contract was not identical.
+
+#### 3. It only implemented the core migration
+
+My hand-built implementation also includes:
+
+- SQL search
+- completion filtering
+- alphabetical sorting
+- pagination
+- SQL statistics
+- timestamps
+- database indexes
+- transactional seeding
+- reset behavior
+- automated tests
+
+The AI did not include these because the first prompt did not request them.
+
+This showed that the AI cannot reliably infer requirements that were never explicitly specified.
+
+### What My First Prompt Forgot
+
+The first prompt left several details open to interpretation.
+
+It did not precisely specify:
+
+- the exact three seed task titles
+- every exact JSON error response
+- partial update behavior
+- every detail of the existing API contract
+- which existing behavior had to remain identical
+
+The AI therefore made reasonable choices for those unspecified details.
+
+The main lesson was that saying "keep the same behavior" is weaker than explicitly defining the behavior that must remain unchanged.
+
+### First Diff
+
+I compared the first AI implementation with my hand-built version using:
+
+```bash
+git diff --no-index main.py ai-version/main.py
+```
+
+The complete diff is stored in:
+
+```text
+ai-version/diff-v1.txt
+```
+
+The diff showed a large difference in implementation size and scope because my hand-built version includes the core migration plus the optional extras and stretch work.
+
+## Rematch
+
+After reviewing the first AI attempt, I improved the prompt to remove the ambiguities I had discovered.
+
+### Improved Prompt — V2
+
+```text
+Act as a backend developer working with Python, FastAPI, and SQLite.
+
+Migrate an existing in-memory CRUD Task API to SQLite while preserving the existing API contract exactly.
+
+Use Python's built-in sqlite3 library. Do not use an ORM.
+
+The SQLite database must be named tasks.db and created automatically.
+
+Create a tasks table automatically if it does not exist with:
+
+- id INTEGER PRIMARY KEY
+- title TEXT NOT NULL
+- done INTEGER NOT NULL DEFAULT 0
+
+Seed exactly these three tasks only when the table is empty:
+
+1. id=1, title="Learn FastAPI", done=false
+2. id=2, title="Build CRUD API", done=false
+3. id=3, title="Push project to GitHub", done=false
+
+Restarting the application must never duplicate these rows.
+
+Preserve exactly these endpoints:
+
+- GET /tasks
+- GET /tasks/{id}
+- POST /tasks
+- PUT /tasks/{id}
+- DELETE /tasks/{id}
+
+GET /tasks must return:
+
+{"id": integer, "title": string, "done": boolean}
+
+Unknown task IDs must return HTTP 404 with:
+
+{"error":"Task <id> not found"}
+
+POST /tasks must reject missing, null, empty, or whitespace-only titles with HTTP 400:
+
+{"error":"Title is required and cannot be empty"}
+
+Valid titles must be stripped of surrounding whitespace.
+
+Successful creation must return HTTP 201.
+
+PUT /tasks/{id} must allow title, done, or both.
+
+If neither field is supplied, return HTTP 400:
+
+{"error":"At least one field is required"}
+
+An empty or whitespace-only title must return HTTP 400:
+
+{"error":"Title cannot be empty"}
+
+Successful updates return HTTP 200.
+
+DELETE /tasks/{id} must return HTTP 204 with an empty body.
+
+Every CRUD operation must read from or write to SQLite.
+
+No in-memory task list may be used as application storage.
+
+Data must survive application restarts.
+
+All user-provided values must use ? placeholders.
+
+Never concatenate user input into SQL strings.
+
+Keep the implementation simple and readable.
+
+Do not add search, sorting, statistics, timestamps, indexes, reset endpoints, or unrelated extras.
+```
+
+### Rematch Result
+
+The second AI implementation was generated as:
+
+```text
+ai-version/main-v2.py
+```
+
+The V2 implementation produced exactly the intended seed rows:
+
+```text
+1  Learn FastAPI
+2  Build CRUD API
+3  Push project to GitHub
+```
+
+An unknown ID returned:
+
+```json
+{"error":"Task 999 not found"}
+```
+
+A POST request with a missing title returned exactly:
+
+```json
+{"error":"Title is required and cannot be empty"}
+```
+
+Creating a task returned HTTP `201`.
+
+After restarting the V2 server, the newly created task was still present.
+
+The database contained exactly four rows after restart:
+
+```text
+3 seed rows + 1 created task = 4
+```
+
+This proved persistence worked without duplicated seeds.
+
+Updating the task returned HTTP `200`.
+
+Deleting it returned HTTP `204` with an empty body.
+
+Requesting the deleted task returned HTTP `404`.
+
+### V1 vs V2
+
+I compared both AI-generated implementations using:
+
+```bash
+git diff --no-index ai-version/main.py ai-version/main-v2.py
+```
+
+The resulting diff is stored at:
+
+```text
+ai-version/diff-v1-v2.txt
+```
+
+The comparison reported:
+
+```text
+34 insertions
+29 deletions
+```
+
+The important change was not code quantity. V2 followed the intended API contract more accurately because the second prompt converted previously implicit expectations into explicit requirements.
+
+### Hand-Built vs V2
+
+I also compared the improved AI version with my hand-built implementation:
+
+```bash
+git diff --no-index main.py ai-version/main-v2.py
+```
+
+That diff is stored at:
+
+```text
+ai-version/diff-hand-v2.txt
+```
+
+The hand-built implementation remains larger because it contains the core assignment plus optional extras and stretch work.
+
+### What Changed in the Rematch
+
+The second prompt explicitly defined:
+
+- the exact seed rows
+- exact validation messages
+- exact 404 messages
+- status-code behavior
+- partial update rules
+- persistence requirements
+- parameterized SQL requirements
+- the prohibition on using an in-memory task list as storage
+
+Those details removed the assumptions made by the first AI attempt.
+
+### Lesson Learned
+
+The experiment demonstrated that AI-generated code can be fast and functional, but correctness depends heavily on specification quality.
+
+Building the migration manually first made it possible to recognize subtle contract changes rather than accepting code simply because it ran successfully.
+
+The rematch showed that reviewing AI output, identifying specification gaps, and improving the prompt can produce a much more precise implementation.
+
+
+## Exact AI Prompt Records
+
+### Prompt V1 — Original
+
+```text
+Act as a backend developer working with Python, FastAPI, and SQLite.
+
+I have an existing in-memory CRUD Task API and I want you to migrate its storage layer to SQLite without changing the public API behavior.
+
+Requirements:
+
+- Keep the same CRUD endpoints:
+  - GET /tasks
+  - GET /tasks/{id}
+  - POST /tasks
+  - PUT /tasks/{id}
+  - DELETE /tasks/{id}
+
+- Use Python's built-in sqlite3 library.
+
+- Store data in a local SQLite database file named tasks.db.
+
+- Create a tasks table automatically if it does not exist.
+
+- The tasks table must include:
+  - id as an integer primary key
+  - title as text
+  - done stored as 0 or 1
+
+- Seed exactly three example tasks only if the tasks table is empty.
+- Restarting the server must not duplicate the seeded tasks.
+
+- GET /tasks must read tasks from SQLite.
+- GET /tasks/{id} must query SQLite by id.
+- POST /tasks must insert a new task into SQLite and let SQLite generate the id.
+- PUT /tasks/{id} must update the matching database row.
+- DELETE /tasks/{id} must delete the matching database row.
+
+Keep the same validation and HTTP behavior as the existing API:
+
+- Missing or empty title -> HTTP 400 with a JSON error response.
+- Unknown task id -> HTTP 404 with a JSON error response.
+- Successful creation -> HTTP 201.
+- Successful deletion -> HTTP 204 with an empty response body.
+- Normal successful reads and updates -> HTTP 200.
+
+Use parameterized SQL queries with ? placeholders for every value that comes from user input. Do not build SQL by concatenating user-provided values.
+
+The data must survive stopping and restarting the FastAPI server.
+
+Keep the implementation simple and readable. Do not add an ORM or unnecessary dependencies.
+
+Return the complete working Python code for the migrated API and briefly explain:
+1. how database initialization works,
+2. how seeding avoids duplicates,
+3. how each CRUD endpoint now talks to SQLite,
+4. where parameterized queries are used.
+
+```
+
+### Prompt V2 — Rematch
+
+```text
+Act as a backend developer working with Python, FastAPI, and SQLite.
+
+I have an existing in-memory CRUD Task API and I want you to migrate only its storage layer to SQLite while preserving the existing API contract exactly.
+
+Use Python's built-in sqlite3 library. Do not use an ORM.
+
+The SQLite database file must be named tasks.db and must be created automatically.
+
+Create a tasks table automatically if it does not exist with these columns:
+
+- id INTEGER PRIMARY KEY
+- title TEXT NOT NULL
+- done INTEGER NOT NULL DEFAULT 0
+
+Seed exactly these three tasks, and only when the table is empty:
+
+1. id=1, title="Learn FastAPI", done=false
+2. id=2, title="Build CRUD API", done=false
+3. id=3, title="Push project to GitHub", done=false
+
+Restarting the application must never duplicate the seed rows.
+
+Preserve these CRUD endpoints:
+
+- GET /tasks
+- GET /tasks/{id}
+- POST /tasks
+- PUT /tasks/{id}
+- DELETE /tasks/{id}
+
+Required behavior:
+
+GET /tasks
+- Return all tasks.
+- Preserve the response shape:
+  {"id": integer, "title": string, "done": boolean}
+
+GET /tasks/{id}
+- Query SQLite using a parameterized query.
+- Unknown IDs must return HTTP 404 with:
+  {"error":"Task <id> not found"}
+
+POST /tasks
+- Missing, null, empty, or whitespace-only titles must return HTTP 400 with:
+  {"error":"Title is required and cannot be empty"}
+- Strip surrounding whitespace from valid titles.
+- Insert using a parameterized SQL query.
+- Let SQLite generate the new id.
+- New tasks must have done=false.
+- Successful creation must return HTTP 201.
+
+PUT /tasks/{id}
+- Allow title, done, or both to be updated.
+- A body containing neither field must return HTTP 400 with:
+  {"error":"At least one field is required"}
+- An empty or whitespace-only title must return HTTP 400 with:
+  {"error":"Title cannot be empty"}
+- Unknown IDs must return HTTP 404 with:
+  {"error":"Task <id> not found"}
+- Use parameterized SQL.
+- Successful updates return HTTP 200.
+
+DELETE /tasks/{id}
+- Unknown IDs must return HTTP 404 with:
+  {"error":"Task <id> not found"}
+- Use a parameterized SQL DELETE.
+- Successful deletion must return HTTP 204 with an empty body.
+
+Persistence requirements:
+
+- Every CRUD operation must read from or write to SQLite.
+- No in-memory task list may be used as application storage.
+- Data must survive stopping and restarting the server.
+- Seed rows must only be inserted when the table is empty.
+- All user-provided values must use ? placeholders.
+- Never concatenate user input into SQL strings.
+
+Keep the code simple, explicit, and readable.
+
+Do not add search, sorting, statistics, timestamps, indexes, reset endpoints, or other extras. This rematch is specifically about reproducing the original CRUD API contract accurately.
+
+Return a complete working FastAPI implementation.
+
+```

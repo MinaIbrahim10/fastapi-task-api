@@ -15,14 +15,14 @@ app = FastAPI(
 
 DATABASE_PATH = Path(__file__).with_name("tasks.db")
 INITIAL_TASKS = [
-    ("Learn FastAPI", 0),
-    ("Build Task API", 0),
-    ("Test the API", 0),
+    (1, "Learn FastAPI", 0),
+    (2, "Build CRUD API", 0),
+    (3, "Push project to GitHub", 0),
 ]
 
 
 class TaskCreate(BaseModel):
-    title: str
+    title: str | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -51,7 +51,7 @@ def initialize_database() -> None:
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY,
                 title TEXT NOT NULL,
-                done INTEGER NOT NULL CHECK (done IN (0, 1))
+                done INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -60,7 +60,7 @@ def initialize_database() -> None:
         ).fetchone()[0]
         if task_count == 0:
             connection.executemany(
-                "INSERT INTO tasks (title, done) VALUES (?, ?)",
+                "INSERT INTO tasks (id, title, done) VALUES (?, ?, ?)",
                 INITIAL_TASKS,
             )
 
@@ -75,7 +75,7 @@ async def validation_exception_handler(
 ):
     return JSONResponse(
         status_code=400,
-        content={"error": "Invalid request data"},
+        content={"error": "Invalid request body or parameters"},
     )
 
 
@@ -105,12 +105,13 @@ def get_task(task_id: int):
 
 @app.post("/tasks", status_code=status.HTTP_201_CREATED)
 def create_task(task_data: TaskCreate):
-    title = task_data.title.strip()
-    if not title:
+    if task_data.title is None or not task_data.title.strip():
         return JSONResponse(
             status_code=400,
-            content={"error": "Title cannot be empty"},
+            content={"error": "Title is required and cannot be empty"},
         )
+
+    title = task_data.title.strip()
     with get_connection() as connection:
         cursor = connection.execute(
             "INSERT INTO tasks (title, done) VALUES (?, ?)",
@@ -126,11 +127,11 @@ def create_task(task_data: TaskCreate):
 @app.put("/tasks/{task_id}")
 def update_task(task_id: int, task_data: TaskUpdate):
     with get_connection() as connection:
-        existing_task = connection.execute(
-            "SELECT id FROM tasks WHERE id = ?",
+        existing = connection.execute(
+            "SELECT id, title, done FROM tasks WHERE id = ?",
             (task_id,),
         ).fetchone()
-        if existing_task is None:
+        if existing is None:
             return JSONResponse(
                 status_code=404,
                 content={"error": f"Task {task_id} not found"},
@@ -138,24 +139,28 @@ def update_task(task_id: int, task_data: TaskUpdate):
         if task_data.title is None and task_data.done is None:
             return JSONResponse(
                 status_code=400,
-                content={"error": "No update data provided"},
+                content={"error": "At least one field is required"},
             )
-        if task_data.title is not None:
-            title = task_data.title.strip()
-            if not title:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "Title cannot be empty"},
-                )
-            connection.execute(
-                "UPDATE tasks SET title = ? WHERE id = ?",
-                (title, task_id),
+        if task_data.title is not None and not task_data.title.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Title cannot be empty"},
             )
-        if task_data.done is not None:
-            connection.execute(
-                "UPDATE tasks SET done = ? WHERE id = ?",
-                (int(task_data.done), task_id),
-            )
+
+        title = (
+            task_data.title.strip()
+            if task_data.title is not None
+            else existing["title"]
+        )
+        done = (
+            int(task_data.done)
+            if task_data.done is not None
+            else existing["done"]
+        )
+        connection.execute(
+            "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
+            (title, done, task_id),
+        )
         row = connection.execute(
             "SELECT id, title, done FROM tasks WHERE id = ?",
             (task_id,),
