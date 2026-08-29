@@ -377,11 +377,21 @@ def delete_task(task_id: int):
 @app.get(
     "/stats",
     summary="Task statistics",
-    description="Returns total, completed, and open task counts."
+    description="Returns task counts calculated directly by SQLite."
 )
 def get_stats():
-    total = len(tasks)
-    completed = sum(1 for task in tasks if task["done"])
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END) AS completed
+            FROM tasks
+            """
+        ).fetchone()
+
+    total = row["total"]
+    completed = row["completed"] or 0
 
     return {
         "total": total,
@@ -393,17 +403,53 @@ def get_stats():
 @app.post(
     "/reset",
     summary="Reset tasks",
-    description="Restores the original three sample tasks."
+    description="Resets the SQLite database to the original three sample tasks."
 )
 def reset_tasks():
-    tasks.clear()
+    now = utc_now()
 
-    tasks.extend(
-        task.copy()
-        for task in INITIAL_TASKS
-    )
+    with get_db() as conn:
+        conn.execute("DELETE FROM tasks")
+
+        conn.executemany(
+            """
+            INSERT INTO tasks (
+                id,
+                title,
+                done,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (1, "Learn FastAPI", 0, now, now),
+                (2, "Build CRUD API", 0, now, now),
+                (3, "Push project to GitHub", 0, now, now),
+            ],
+        )
+
+        conn.commit()
+
+        rows = conn.execute(
+            """
+            SELECT id, title, done
+            FROM tasks
+            ORDER BY id
+            """
+        ).fetchall()
+
+    tasks = [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "done": bool(row["done"]),
+        }
+        for row in rows
+    ]
 
     return {
         "message": "Tasks reset",
         "tasks": tasks
     }
+
