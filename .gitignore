@@ -3,3 +3,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+
+# Authentication assignment
+.env
+.env.*
+!.env.example
+.venv-auth/
+__pycache__/
+*.pyc
