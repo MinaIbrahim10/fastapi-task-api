@@ -1,94 +1,28 @@
 from fastapi import FastAPI, Request
-import sqlite3
-from pathlib import Path
 from datetime import datetime, timezone
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from postgres_repository import (
-    initialize_database as initialize_postgres_database,
+    initialize_database,
     list_tasks as repository_list_tasks,
     get_task_by_id as repository_get_task_by_id,
+    create_task as repository_create_task,
+    update_task as repository_update_task,
+    delete_task as repository_delete_task,
+    get_stats as repository_get_stats,
+    reset_tasks as repository_reset_tasks,
+    database_health,
 )
 
 
-DB_PATH = Path("tasks.db")
+initialize_database()
 
-
-def get_db():
-    """Open a SQLite connection with dictionary-like rows."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def utc_now():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def initialize_database():
-    """Create the tasks table and seed it once when empty."""
-    with get_db() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY,
-                title TEXT NOT NULL,
-                done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0, 1)),
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-
-        # Indexes support common search/filter access patterns.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks(title)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_done ON tasks(done)"
-        )
-
-        count = conn.execute(
-            "SELECT COUNT(*) AS count FROM tasks"
-        ).fetchone()["count"]
-
-        if count == 0:
-            now = utc_now()
-
-            try:
-                conn.execute("BEGIN")
-
-                conn.executemany(
-                    """
-                    INSERT INTO tasks (
-                        id,
-                        title,
-                        done,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (1, "Learn FastAPI", 0, now, now),
-                        (2, "Build CRUD API", 0, now, now),
-                        (3, "Push project to GitHub", 0, now, now),
-                    ],
-                )
-
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-
-
-initialize_postgres_database()
 
 app = FastAPI(
     title="Task API",
     version="1.1",
-    description="A simple in-memory CRUD API for managing tasks."
+    description="A PostgreSQL-backed CRUD API for managing tasks."
 )
 
 
@@ -136,7 +70,22 @@ def root():
     description="Checks whether the API server is running."
 )
 def health():
-    return {"status": "ok"}
+    try:
+        if database_health():
+            return {
+                "status": "ok",
+                "db": "ok",
+            }
+    except Exception:
+        pass
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "error",
+            "db": "unavailable",
+        },
+    )
 
 
 @app.get(
@@ -205,7 +154,7 @@ def get_task(task_id: int):
     "/tasks",
     status_code=201,
     summary="Create a new task",
-    description="Creates a new task in SQLite with done set to false."
+    description="Creates a new task in PostgreSQL with done set to false."
 )
 def create_task(task_data: TaskCreate):
     if task_data.title is None or not task_data.title.strip():
@@ -214,47 +163,15 @@ def create_task(task_data: TaskCreate):
             content={"error": "Title is required and cannot be empty"}
         )
 
-    title = task_data.title.strip()
-    now = utc_now()
-
-    with get_db() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO tasks (
-                title,
-                done,
-                created_at,
-                updated_at
-            )
-            VALUES (?, 0, ?, ?)
-            """,
-            (title, now, now),
-        )
-
-        task_id = cursor.lastrowid
-
-        row = conn.execute(
-            """
-            SELECT id, title, done
-            FROM tasks
-            WHERE id = ?
-            """,
-            (task_id,),
-        ).fetchone()
-
-        conn.commit()
-
-    return {
-        "id": row["id"],
-        "title": row["title"],
-        "done": bool(row["done"]),
-    }
+    return repository_create_task(
+        task_data.title.strip()
+    )
 
 
 @app.put(
     "/tasks/{task_id}",
     summary="Update a task",
-    description="Updates an existing task in SQLite."
+    description="Updates an existing task in PostgreSQL."
 )
 def update_task(task_id: int, task_data: TaskUpdate):
     if task_data.title is None and task_data.done is None:
@@ -269,87 +186,42 @@ def update_task(task_id: int, task_data: TaskUpdate):
             content={"error": "Title cannot be empty"}
         )
 
-    with get_db() as conn:
-        existing = conn.execute(
-            """
-            SELECT id, title, done
-            FROM tasks
-            WHERE id = ?
-            """,
-            (task_id,),
-        ).fetchone()
+    title = (
+        task_data.title.strip()
+        if task_data.title is not None
+        else None
+    )
 
-        if existing is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"Task {task_id} not found"}
-            )
+    task = repository_update_task(
+        task_id=task_id,
+        title=title,
+        done=task_data.done,
+    )
 
-        new_title = (
-            task_data.title.strip()
-            if task_data.title is not None
-            else existing["title"]
+    if task is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Task {task_id} not found"}
         )
 
-        new_done = (
-            1 if task_data.done
-            else 0 if task_data.done is not None
-            else existing["done"]
-        )
-
-        now = utc_now()
-
-        conn.execute(
-            """
-            UPDATE tasks
-            SET title = ?, done = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (new_title, new_done, now, task_id),
-        )
-
-        row = conn.execute(
-            """
-            SELECT id, title, done
-            FROM tasks
-            WHERE id = ?
-            """,
-            (task_id,),
-        ).fetchone()
-
-        conn.commit()
-
-    return {
-        "id": row["id"],
-        "title": row["title"],
-        "done": bool(row["done"]),
-    }
+    return task
 
 
 @app.delete(
     "/tasks/{task_id}",
     summary="Delete a task",
-    description="Deletes an existing task from SQLite."
+    description="Deletes an existing task from PostgreSQL."
 )
 def delete_task(task_id: int):
-    with get_db() as conn:
-        existing = conn.execute(
-            "SELECT id FROM tasks WHERE id = ?",
-            (task_id,),
-        ).fetchone()
+    deleted = repository_delete_task(
+        task_id
+    )
 
-        if existing is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"Task {task_id} not found"}
-            )
-
-        conn.execute(
-            "DELETE FROM tasks WHERE id = ?",
-            (task_id,),
+    if not deleted:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Task {task_id} not found"}
         )
-
-        conn.commit()
 
     return Response(status_code=204)
 
@@ -357,79 +229,21 @@ def delete_task(task_id: int):
 @app.get(
     "/stats",
     summary="Task statistics",
-    description="Returns task counts calculated directly by SQLite."
+    description="Returns task counts calculated directly by PostgreSQL."
 )
 def get_stats():
-    with get_db() as conn:
-        row = conn.execute(
-            """
-            SELECT
-                COUNT(*) AS total,
-                SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END) AS completed
-            FROM tasks
-            """
-        ).fetchone()
-
-    total = row["total"]
-    completed = row["completed"] or 0
-
-    return {
-        "total": total,
-        "done": completed,
-        "open": total - completed
-    }
+    return repository_get_stats()
 
 
 @app.post(
     "/reset",
     summary="Reset tasks",
-    description="Resets the SQLite database to the original three sample tasks."
+    description="Resets PostgreSQL to the original three sample tasks."
 )
 def reset_tasks():
-    now = utc_now()
-
-    with get_db() as conn:
-        conn.execute("DELETE FROM tasks")
-
-        conn.executemany(
-            """
-            INSERT INTO tasks (
-                id,
-                title,
-                done,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            [
-                (1, "Learn FastAPI", 0, now, now),
-                (2, "Build CRUD API", 0, now, now),
-                (3, "Push project to GitHub", 0, now, now),
-            ],
-        )
-
-        conn.commit()
-
-        rows = conn.execute(
-            """
-            SELECT id, title, done
-            FROM tasks
-            ORDER BY id
-            """
-        ).fetchall()
-
-    tasks = [
-        {
-            "id": row["id"],
-            "title": row["title"],
-            "done": bool(row["done"]),
-        }
-        for row in rows
-    ]
+    tasks = repository_reset_tasks()
 
     return {
         "message": "Tasks reset",
-        "tasks": tasks
+        "tasks": tasks,
     }
-

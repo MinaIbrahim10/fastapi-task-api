@@ -225,3 +225,188 @@ def get_task_by_id(task_id: int):
         "title": row["title"],
         "done": bool(row["done"]),
     }
+
+
+def create_task(title: str):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO tasks (
+                    title,
+                    done,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, FALSE, NOW(), NOW())
+                RETURNING id, title, done
+                """,
+                (title,),
+            )
+
+            row = cursor.fetchone()
+
+        conn.commit()
+
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "done": bool(row["done"]),
+    }
+
+
+def update_task(
+    task_id: int,
+    title: str | None = None,
+    done: bool | None = None,
+):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, title, done
+                FROM tasks
+                WHERE id = %s
+                """,
+                (task_id,),
+            )
+
+            existing = cursor.fetchone()
+
+            if existing is None:
+                return None
+
+            new_title = (
+                title
+                if title is not None
+                else existing["title"]
+            )
+
+            new_done = (
+                done
+                if done is not None
+                else existing["done"]
+            )
+
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET
+                    title = %s,
+                    done = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, title, done
+                """,
+                (
+                    new_title,
+                    new_done,
+                    task_id,
+                ),
+            )
+
+            row = cursor.fetchone()
+
+        conn.commit()
+
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "done": bool(row["done"]),
+    }
+
+
+def delete_task(task_id: int) -> bool:
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM tasks
+                WHERE id = %s
+                RETURNING id
+                """,
+                (task_id,),
+            )
+
+            deleted = cursor.fetchone()
+
+        conn.commit()
+
+    return deleted is not None
+
+
+def get_stats():
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (
+                        WHERE done = TRUE
+                    ) AS completed
+                FROM tasks
+                """
+            )
+
+            row = cursor.fetchone()
+
+    total = row["total"]
+    completed = row["completed"]
+
+    return {
+        "total": total,
+        "done": completed,
+        "open": total - completed,
+    }
+
+
+def reset_tasks():
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "TRUNCATE TABLE tasks RESTART IDENTITY"
+            )
+
+            cursor.executemany(
+                """
+                INSERT INTO tasks (
+                    id,
+                    title,
+                    done
+                )
+                VALUES (%s, %s, %s)
+                """,
+                SEED_TASKS,
+            )
+
+            cursor.execute(
+                """
+                SELECT setval(
+                    pg_get_serial_sequence('tasks', 'id'),
+                    (SELECT MAX(id) FROM tasks),
+                    true
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                SELECT id, title, done
+                FROM tasks
+                ORDER BY id
+                """
+            )
+
+            rows = cursor.fetchall()
+
+        conn.commit()
+
+    return [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "done": bool(row["done"]),
+        }
+        for row in rows
+    ]
