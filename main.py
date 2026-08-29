@@ -1,7 +1,70 @@
 from fastapi import FastAPI, Request
+import sqlite3
+from pathlib import Path
+from datetime import datetime, timezone
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
+
+
+DB_PATH = Path("tasks.db")
+
+
+def get_db():
+    """Open a SQLite connection with dictionary-like rows."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def utc_now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def initialize_database():
+    """Create the tasks table and seed it once when empty."""
+    with get_db() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0, 1)),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+        count = conn.execute(
+            "SELECT COUNT(*) AS count FROM tasks"
+        ).fetchone()["count"]
+
+        if count == 0:
+            now = utc_now()
+
+            conn.executemany(
+                """
+                INSERT INTO tasks (
+                    id,
+                    title,
+                    done,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (1, "Learn FastAPI", 0, now, now),
+                    (2, "Build CRUD API", 0, now, now),
+                    (3, "Push project to GitHub", 0, now, now),
+                ],
+            )
+
+        conn.commit()
+
+
+initialize_database()
 
 app = FastAPI(
     title="Task API",
