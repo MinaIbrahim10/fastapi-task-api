@@ -9,3 +9,6 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_done
 ON tasks(done);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_title
+ON tasks (title);

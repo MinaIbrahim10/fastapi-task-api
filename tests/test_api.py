@@ -1,30 +1,28 @@
-import sqlite3
-
 import pytest
 from fastapi.testclient import TestClient
 
 import main
+import postgres_repository as repo
 
 
 client = TestClient(main.app)
 
 
 @pytest.fixture(autouse=True)
-def isolated_database(tmp_path, monkeypatch):
-    test_db = tmp_path / "test_tasks.db"
-    monkeypatch.setattr(main, "DB_PATH", test_db)
-
-    main.initialize_database()
-    yield test_db
+def isolated_database():
+    repo.reset_tasks()
+    yield
 
 
 def test_database_seeds_exactly_once():
-    main.initialize_database()
+    repo.initialize_database()
 
-    with main.get_db() as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM tasks"
-        ).fetchone()[0]
+    with repo.get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) AS count FROM tasks"
+            )
+            count = cursor.fetchone()["count"]
 
     assert count == 3
 
@@ -55,15 +53,21 @@ def test_create_task_persists_to_database():
 
     task = response.json()
 
-    with main.get_db() as conn:
-        row = conn.execute(
-            "SELECT title, done FROM tasks WHERE id = ?",
-            (task["id"],),
-        ).fetchone()
+    with repo.get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT title, done
+                FROM tasks
+                WHERE id = %s
+                """,
+                (task["id"],),
+            )
+            row = cursor.fetchone()
 
     assert row is not None
     assert row["title"] == "Database test"
-    assert row["done"] == 0
+    assert row["done"] is False
 
 
 def test_missing_title_returns_400():
@@ -85,13 +89,20 @@ def test_update_task_uses_database():
     assert response.json()["title"] == "Updated with SQL"
     assert response.json()["done"] is True
 
-    with main.get_db() as conn:
-        row = conn.execute(
-            "SELECT title, done FROM tasks WHERE id = 1"
-        ).fetchone()
+    with repo.get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT title, done
+                FROM tasks
+                WHERE id = %s
+                """,
+                (1,),
+            )
+            row = cursor.fetchone()
 
     assert row["title"] == "Updated with SQL"
-    assert row["done"] == 1
+    assert row["done"] is True
 
 
 def test_delete_task_removes_database_row():
@@ -99,10 +110,13 @@ def test_delete_task_removes_database_row():
 
     assert response.status_code == 204
 
-    with main.get_db() as conn:
-        row = conn.execute(
-            "SELECT id FROM tasks WHERE id = 1"
-        ).fetchone()
+    with repo.get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM tasks WHERE id = %s",
+                (1,),
+            )
+            row = cursor.fetchone()
 
     assert row is None
 
@@ -174,10 +188,12 @@ def test_reset_restores_seed_tasks():
     assert response.status_code == 200
     assert len(response.json()["tasks"]) == 3
 
-    with main.get_db() as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM tasks"
-        ).fetchone()[0]
+    with repo.get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) AS count FROM tasks"
+            )
+            count = cursor.fetchone()["count"]
 
     assert count == 3
 
@@ -211,16 +227,22 @@ def test_invalid_sort_returns_400():
 
 
 def test_search_and_filter_indexes_exist():
-    with main.get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'index'
-            """
-        ).fetchall()
+    with repo.get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT indexname
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'tasks'
+                """
+            )
+            rows = cursor.fetchall()
 
-    names = {row["name"] for row in rows}
+    names = {
+        row["indexname"]
+        for row in rows
+    }
 
     assert "idx_tasks_title" in names
     assert "idx_tasks_done" in names
