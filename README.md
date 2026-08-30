@@ -703,3 +703,428 @@ The comparison showed that the initial AI prompt was enough to produce a functio
 
 This was useful because it separated two different skills: generating a working implementation and engineering a migration that preserves existing behavior while improving operational quality.
 
+<!-- A17-LLM-TRIAGE:START -->
+
+# A17 — Put an LLM Behind the API
+
+## What it does
+
+`POST /ai/triage` accepts one software/product support message and returns
+schema-validated structured JSON.
+
+Input:
+
+```json
+{
+  "text": "I was charged twice for my subscription."
+}
+```
+
+Output:
+
+```json
+{
+  "category": "billing",
+  "urgency": "high",
+  "suggested_team": "billing",
+  "confidence": 0.99,
+  "needs_review": false,
+  "reason": "The user reports being double-charged for their subscription."
+}
+```
+
+The endpoint uses a local Ollama model by default:
+
+```text
+gemma4:e4b-it
+```
+
+Selected production prompt:
+
+```text
+prompts/triage-v2.md
+```
+
+## Allowed categories
+
+```text
+bug
+feature
+account
+billing
+security
+other
+```
+
+The backend derives the team deterministically:
+
+```text
+bug      -> engineering
+feature  -> product
+account  -> support
+billing  -> billing
+security -> security
+other    -> support
+```
+
+## Run locally
+
+Start the existing database/Redis services:
+
+```bash
+docker compose up -d db redis
+```
+
+Create the Python environment and install dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Copy the environment template:
+
+```bash
+cp .env.example .env
+```
+
+Make sure Ollama is running and the model exists:
+
+```bash
+ollama list
+```
+
+Then start the API:
+
+```bash
+uvicorn main:app --reload
+```
+
+## Runnable curl
+
+```bash
+curl -sS \
+  -X POST \
+  http://127.0.0.1:8000/ai/triage \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "text": "I was charged twice for the same monthly subscription."
+  }'
+```
+
+Expected shape:
+
+```json
+{
+  "category": "billing",
+  "urgency": "high",
+  "suggested_team": "billing",
+  "confidence": 0.99,
+  "needs_review": false,
+  "reason": "..."
+}
+```
+
+## Failure contract
+
+The endpoint never returns raw model text.
+
+Important outcomes:
+
+```text
+400  invalid request input
+422  model failed structured validation after one repair attempt
+503  LLM disabled or provider temporarily unavailable
+504  LLM timeout
+```
+
+Invalid model output receives exactly one repair attempt. A second failure is
+written to the ignored quarantine log and converted to a clean `422`.
+
+## Reliability controls
+
+The implementation includes:
+
+- explicit provider timeout
+- SDK retries disabled (`max_retries=0`)
+- application-controlled retry policy
+- retries only for timeout, connection errors, HTTP 429, and HTTP 5xx
+- exponential backoff plus jitter
+- `Retry-After` support
+- `LLM_ENABLED=false` kill switch
+- structured per-call token/latency logging
+- input/output token budgets
+- prompt versioning
+- refusal detection
+- provider JSON/structured-output mode
+- Pydantic validation after model generation
+- one repair attempt
+- quarantine after repeated invalid output
+- cache of trusted responses only
+
+## Provider abstraction
+
+The triage business logic is provider-independent.
+
+Two real implementations were tested:
+
+```text
+openai_compatible
+ollama_native
+```
+
+Both currently reach the same local Ollama model.
+
+`openai_compatible` uses Ollama's OpenAI-compatible `/v1` API.
+
+`ollama_native` uses Ollama's native `/api/chat` API.
+
+This means the application can change transport/provider implementations
+without rewriting the `/ai/triage` endpoint or its validation logic.
+
+## Required 8-case evaluation
+
+Evaluation date: **2026-08-30**
+
+### Initial v1 result
+
+With the original 300-token output budget:
+
+```text
+Trusted responses : 5/8
+Exact accuracy    : 62.5%
+```
+
+Three failures were empty completions rather than classification mistakes.
+
+### v1 after runtime token-budget fix
+
+The prompt was unchanged and `max output tokens` was increased from 300 to
+1024:
+
+```text
+Trusted responses : 8/8
+Category accuracy : 87.5%
+Team accuracy     : 100.0%
+Exact accuracy    : 87.5%
+```
+
+This isolated a runtime/output-budget problem from prompt quality.
+
+### Prompt v2
+
+A focused category-boundary clarification fixed the remaining account/login
+classification error:
+
+```text
+Trusted responses : 8/8
+Category accuracy : 100.0%
+Team accuracy     : 100.0%
+Exact accuracy    : 100.0%
+```
+
+Selected prompt: **v2**
+
+## Stretch evaluation — 25 labelled cases
+
+Prompt v2 was then evaluated on the same fixed 25-case set containing easy,
+hard, and adversarial inputs.
+
+```text
+Trusted responses : 25/25
+Category accuracy : 23/25 = 92.0%
+Team accuracy     : 24/25 = 96.0%
+Exact accuracy    : 23/25 = 92.0%
+
+Easy             : 11/11 = 100.0%
+Hard             : 12/14 = 85.7%
+Prompt injections: 5/5   = 100.0%
+```
+
+Two hard security-boundary cases remained classification errors.
+
+## Prompt v3 experiment
+
+A security-focused prompt v3 was tested against the exact same 25 cases.
+
+```text
+V2 exact   : 92.0%
+V2 attacks : 100.0%
+
+V3 exact   : 92.0%
+V3 attacks : 80.0%
+```
+
+Because v3 did not improve overall accuracy and regressed adversarial
+robustness, **v2 remains the selected production prompt**.
+
+This experiment is retained rather than hiding the regression.
+
+## Prompt-injection mitigation
+
+The implementation uses multiple layers:
+
+1. system instructions and user content are sent as separate messages
+2. user support text is explicitly treated as untrusted data
+3. prompts prohibit following instructions embedded in the support message
+4. provider structured-output/JSON mode is enabled
+5. Pydantic validates the final output
+6. raw model text is never returned by the API
+
+The 25-case stretch evaluation included five adversarial prompt-injection
+cases; prompt v2 passed **5/5**.
+
+## Cache
+
+Trusted results may be cached using a key derived from:
+
+```text
+input text
++ prompt version
++ model
++ provider
+```
+
+Default TTL:
+
+```text
+300 seconds
+```
+
+Real local demonstration:
+
+```text
+First model call : 1373.8 ms
+Cached call      : ~0.0 ms
+Same result      : true
+```
+
+Changing the prompt version, model, provider, or input generates a different
+cache key.
+
+## Token budget and cost
+
+Configuration:
+
+```text
+LLM_MAX_INPUT_TOKENS=4096
+LLM_MAX_OUTPUT_TOKENS=1024
+```
+
+A preflight token estimate rejects obviously oversized prompts before a
+provider request is made.
+
+Observed sample from 25 real calls:
+
+```text
+Average input tokens  : 804.9
+Average output tokens : 332.7
+Average total tokens  : 1137.6
+```
+
+Current provider/model runs locally through Ollama, so configured API pricing
+is:
+
+```text
+Input cost  per 1M tokens : $0
+Output cost per 1M tokens : $0
+```
+
+Projection:
+
+```text
+1,000 requests  : $0.0000 API cost
+10,000/day       : $0.0000/day API cost
+```
+
+Local electricity and hardware cost are intentionally not counted as API
+usage cost.
+
+For a paid provider, pricing can be configured with:
+
+```text
+LLM_INPUT_COST_PER_1M_USD
+LLM_OUTPUT_COST_PER_1M_USD
+```
+
+without changing application code.
+
+## Two-model race
+
+A five-case real comparison was run between:
+
+```text
+gemma4:e4b-it
+hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:latest
+```
+
+Results:
+
+```text
+gemma4:e4b-it
+  Valid    : 5/5
+  Correct  : 4/5 = 80.0%
+  Avg time : 1184.6 ms
+
+Llama-3.2-1B-Instruct
+  Valid    : 5/5
+  Correct  : 3/5 = 60.0%
+  Avg time : 884.6 ms
+```
+
+The smaller Llama model was faster, but Gemma was more accurate, so
+`gemma4:e4b-it` remains the selected production model.
+
+## Tests
+
+Latest full test result during A17 development:
+
+```text
+87 passed
+```
+
+The remaining warnings are existing FastAPI `on_event` deprecation warnings
+and are unrelated to the LLM endpoint.
+
+## Important files
+
+```text
+JOB-CARD.md
+prompts/triage-v1.md
+prompts/triage-v2.md
+prompts/triage-v3.md
+src/llm/client.py
+src/llm/provider.py
+src/llm/schema.py
+src/llm/cache.py
+src/llm/cost.py
+evals/cases.json
+evals/run_eval.py
+evals/stretch-25-cases.json
+evals/run_stretch_eval.py
+evals/race_models.py
+```
+
+## Environment switches
+
+```text
+LLM_ENABLED
+LLM_STUB
+LLM_PROVIDER
+LLM_MODEL
+LLM_PROMPT_VERSION
+LLM_TIMEOUT_SECONDS
+LLM_MAX_RETRIES
+LLM_MAX_INPUT_TOKENS
+LLM_MAX_OUTPUT_TOKENS
+LLM_STRUCTURED_OUTPUT
+LLM_CACHE_ENABLED
+LLM_CACHE_TTL_SECONDS
+LLM_INPUT_COST_PER_1M_USD
+LLM_OUTPUT_COST_PER_1M_USD
+```
+
+No API keys or `.env` contents are committed.
+
+<!-- A17-LLM-TRIAGE:END -->
