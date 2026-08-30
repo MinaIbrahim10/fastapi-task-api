@@ -1,0 +1,8 @@
+ id |             title             | done 
+----+-------------------------------+------
+  1 | Learn FastAPI                 | f
+  2 | Build CRUD API                | f
+  3 | Push project to GitHub        | f
+  4 | SURVIVES FULL COMPOSE RESTART | f
+(4 rows)
+
