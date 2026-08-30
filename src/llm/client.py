@@ -107,6 +107,26 @@ def build_provider() -> LLMProvider:
     )
 
 
+def _looks_like_refusal(raw: str) -> bool:
+    text = raw.strip().lower()
+
+    refusal_markers = (
+        "i can't assist",
+        "i cannot assist",
+        "i can't comply",
+        "i cannot comply",
+        "i'm unable to",
+        "i am unable to",
+        "cannot provide",
+        "can't provide",
+    )
+
+    return any(
+        marker in text
+        for marker in refusal_markers
+    )
+
+
 def _extract_json_object(raw: str) -> dict[str, Any]:
     text = raw.strip()
 
@@ -151,6 +171,11 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
 
 
 def _parse_and_validate(raw: str) -> TriageResponse:
+    if _looks_like_refusal(raw):
+        raise ValueError(
+            "Model returned a refusal instead of structured output"
+        )
+
     parsed = _extract_json_object(raw)
     response = TriageResponse.model_validate(parsed)
 
@@ -353,11 +378,20 @@ def _call_model(
         try:
             provider = build_provider()
 
+            structured_output = (
+                os.getenv(
+                    "LLM_STRUCTURED_OUTPUT",
+                    "true",
+                ).lower()
+                == "true"
+            )
+
             response = provider.complete(
                 model=model,
                 system_prompt=system_prompt,
                 user_message=user_message,
                 max_tokens=max_tokens,
+                structured_output=structured_output,
             )
 
             duration_ms = int(
