@@ -18,6 +18,11 @@ from openai import (
 )
 from pydantic import ValidationError
 
+from .cache import (
+    cache_enabled,
+    cache_ttl_seconds,
+    triage_cache,
+)
 from .cost import calculate_cost, estimate_tokens
 from .provider import (
     LLMProvider,
@@ -477,6 +482,25 @@ def _write_quarantine(
 
 def call_triage_model(text: str) -> TriageResponse:
     prompt_version = get_prompt_version()
+    model = os.environ["LLM_MODEL"]
+    provider_name = os.getenv(
+        "LLM_PROVIDER",
+        "openai_compatible",
+    ).strip().lower()
+
+    cache_key = triage_cache.build_key(
+        text=text,
+        prompt_version=prompt_version,
+        model=model,
+        provider=provider_name,
+    )
+
+    if cache_enabled():
+        cached = triage_cache.get(cache_key)
+
+        if cached is not None:
+            return TriageResponse.model_validate(cached)
+
     system_prompt = load_system_prompt(prompt_version)
 
     user_payload = json.dumps(
@@ -494,7 +518,17 @@ def call_triage_model(text: str) -> TriageResponse:
     )
 
     try:
-        return _parse_and_validate(first_raw)
+        response = _parse_and_validate(first_raw)
+
+        if cache_enabled():
+            triage_cache.set(
+                cache_key,
+                response.model_dump(mode="json"),
+                ttl_seconds=cache_ttl_seconds(),
+            )
+
+        return response
+
     except (ValueError, ValidationError) as first_exc:
         first_error = _validation_message(first_exc)
 
@@ -506,7 +540,17 @@ def call_triage_model(text: str) -> TriageResponse:
     )
 
     try:
-        return _parse_and_validate(repaired_raw)
+        response = _parse_and_validate(repaired_raw)
+
+        if cache_enabled():
+            triage_cache.set(
+                cache_key,
+                response.model_dump(mode="json"),
+                ttl_seconds=cache_ttl_seconds(),
+            )
+
+        return response
+
     except (ValueError, ValidationError) as final_exc:
         final_error = _validation_message(final_exc)
 
