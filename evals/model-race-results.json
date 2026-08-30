@@ -1,0 +1,127 @@
+{
+  "provider": "openai_compatible",
+  "prompt_version": "v2",
+  "structured_output": true,
+  "models": [
+    "gemma4:e4b-it",
+    "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:latest"
+  ],
+  "summary": {
+    "gemma4:e4b-it": {
+      "cases": 5,
+      "valid_responses": 5,
+      "correct_responses": 4,
+      "accuracy": 0.8,
+      "average_latency_ms": 1184.5622926000942
+    },
+    "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:latest": {
+      "cases": 5,
+      "valid_responses": 5,
+      "correct_responses": 3,
+      "accuracy": 0.6,
+      "average_latency_ms": 884.5514719996572
+    }
+  },
+  "results": [
+    {
+      "case_id": "bug",
+      "model": "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:latest",
+      "ok": true,
+      "correct": true,
+      "latency_ms": 2406.0188459998244,
+      "category": "bug",
+      "team": "engineering",
+      "error": null
+    },
+    {
+      "case_id": "bug",
+      "model": "gemma4:e4b-it",
+      "ok": true,
+      "correct": true,
+      "latency_ms": 2657.5042599997687,
+      "category": "bug",
+      "team": "engineering",
+      "error": null
+    },
+    {
+      "case_id": "billing",
+      "model": "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:latest",
+      "ok": true,
+      "correct": false,
+      "latency_ms": 439.9058219996732,
+      "category": "account",
+      "team": "support",
+      "error": null
+    },
+    {
+      "case_id": "billing",
+      "model": "gemma4:e4b-it",
+      "ok": true,
+      "correct": true,
+      "latency_ms": 1409.9995399992622,
+      "category": "billing",
+      "team": "billing",
+      "error": null
+    },
+    {
+      "case_id": "security",
+      "model": "gemma4:e4b-it",
+      "ok": true,
+      "correct": false,
+      "latency_ms": 430.5813630007833,
+      "category": "account",
+      "team": "support",
+      "error": null
+    },
+    {
+      "case_id": "security",
+      "model": "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:latest",
+      "ok": true,
+      "correct": false,
+      "latency_ms": 688.2676759996684,
+      "category": "account",
+      "team": "support",
+      "error": null
+    },
+    {
+      "case_id": "account",
+      "model": "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:latest",
+      "ok": true,
+      "correct": true,
+      "latency_ms": 418.04703999969206,
+      "category": "account",
+      "team": "support",
+      "error": null
+    },
+    {
+      "case_id": "account",
+      "model": "gemma4:e4b-it",
+      "ok": true,
+      "correct": true,
+      "latency_ms": 664.6806320004544,
+      "category": "account",
+      "team": "support",
+      "error": null
+    },
+    {
+      "case_id": "injection",
+      "model": "hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF:latest",
+      "ok": true,
+      "correct": true,
+      "latency_ms": 470.517975999428,
+      "category": "other",
+      "team": "support",
+      "error": null
+    },
+    {
+      "case_id": "injection",
+      "model": "gemma4:e4b-it",
+      "ok": true,
+      "correct": true,
+      "latency_ms": 760.0456680002026,
+      "category": "other",
+      "team": "support",
+      "error": null
+    }
+  ]
+}
