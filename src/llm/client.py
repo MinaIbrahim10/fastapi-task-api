@@ -18,6 +18,7 @@ from openai import (
 )
 from pydantic import ValidationError
 
+from .cost import calculate_cost, estimate_tokens
 from .provider import (
     LLMProvider,
     OllamaNativeProvider,
@@ -254,6 +255,7 @@ def _write_cost_log(
     input_tokens: int,
     output_tokens: int,
     total_tokens: int,
+    estimated_cost_usd: float,
     duration_ms: int,
     repair_count: int,
     attempts: int,
@@ -273,6 +275,10 @@ def _write_cost_log(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
+        "estimated_cost_usd": round(
+            estimated_cost_usd,
+            10,
+        ),
         "duration_ms": duration_ms,
         "repair_count": repair_count,
         "transport_attempts": attempts,
@@ -317,6 +323,23 @@ def _call_model(
         )
     )
 
+    estimated_input_tokens = estimate_tokens(
+        system_prompt + "\n" + user_message
+    )
+
+    max_input_tokens = int(
+        os.getenv(
+            "LLM_MAX_INPUT_TOKENS",
+            "4096",
+        )
+    )
+
+    if estimated_input_tokens > max_input_tokens:
+        raise ValueError(
+            "Estimated prompt token budget exceeded: "
+            f"{estimated_input_tokens} > {max_input_tokens}"
+        )
+
     last_exc: Exception | None = None
 
     for attempt in range(max_retries + 1):
@@ -340,6 +363,11 @@ def _call_model(
                 * 1000
             )
 
+            cost = calculate_cost(
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+            )
+
             _write_cost_log(
                 provider=provider_name,
                 model=model,
@@ -347,6 +375,7 @@ def _call_model(
                 input_tokens=response.input_tokens,
                 output_tokens=response.output_tokens,
                 total_tokens=response.total_tokens,
+                estimated_cost_usd=cost.total_cost_usd,
                 duration_ms=duration_ms,
                 repair_count=repair_count,
                 attempts=attempt + 1,
