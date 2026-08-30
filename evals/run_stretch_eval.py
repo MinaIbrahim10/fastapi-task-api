@@ -13,7 +13,8 @@ from src.llm.client import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES_PATH = ROOT / "evals" / "stretch-25-cases.json"
-RESULTS_PATH = ROOT / "evals" / "stretch-v2-results.json"
+PROMPT_VERSION = os.getenv("LLM_PROMPT_VERSION", "v1")
+RESULTS_PATH = ROOT / "evals" / f"stretch-{PROMPT_VERSION}-results.json"
 
 
 def percentage(hits: int, total: int) -> float:
