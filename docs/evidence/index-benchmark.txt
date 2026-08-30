@@ -1,0 +1,32 @@
+DROP TABLE
+CREATE TABLE
+INSERT 0 100000
+ANALYZE
+
+==================================================
+BEFORE INDEX
+==================================================
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Seq Scan on task_index_benchmark  (cost=0.00..1736.00 rows=993 width=29) (actual time=0.008..3.095 rows=1000 loops=1)
+   Filter: done
+   Rows Removed by Filter: 99000
+ Planning Time: 0.061 ms
+ Execution Time: 3.123 ms
+(5 rows)
+
+CREATE INDEX
+ANALYZE
+
+==================================================
+AFTER INDEX
+==================================================
+                                                                         QUERY PLAN                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_task_index_benchmark_done on task_index_benchmark  (cost=0.29..121.32 rows=1027 width=29) (actual time=0.008..0.414 rows=1000 loops=1)
+   Index Cond: (done = true)
+ Planning Time: 0.082 ms
+ Execution Time: 0.444 ms
+(4 rows)
+
+DROP TABLE

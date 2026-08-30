@@ -1,0 +1,17 @@
+PostgreSQL mortality experiment
+================================
+
+Experiment:
+1. Started postgres:17 without a named/bind volume.
+2. Created mortality_test.
+3. Inserted marker: THIS DATA SHOULD DIE.
+4. Destroyed the container and its anonymous volume.
+5. Started a completely new PostgreSQL container.
+6. Querying mortality_test failed because the table no longer existed.
+
+Result:
+PASS — container-local database state disappears when no persistent
+volume is retained.
+
+This contrasts with the Compose taskdata named volume, where the Task API
+row survived docker compose down followed by docker compose up.

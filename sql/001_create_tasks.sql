@@ -5,3 +5,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+CREATE INDEX IF NOT EXISTS idx_tasks_done
+ON tasks(done);

@@ -1,8 +1,6 @@
 fastapi
 uvicorn[standard]
 pydantic
-pytest
-httpx
 psycopg[binary]
 python-dotenv
 redis
