@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.venv/
+.venv-a3/
+.venv-auth/
+__pycache__/
+*.pyc
+.pytest_cache/
+tasks.db
+tests/
+ai-version/
+ai-version-v2/
