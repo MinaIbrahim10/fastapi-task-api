@@ -1,4 +1,5 @@
 import json
+import httpx
 import os
 import random
 import time
@@ -17,6 +18,11 @@ from openai import (
 )
 from pydantic import ValidationError
 
+from .provider import (
+    LLMProvider,
+    OllamaNativeProvider,
+    OpenAICompatibleProvider,
+)
 from .schema import TriageResponse
 
 
@@ -62,6 +68,36 @@ def build_client() -> OpenAI:
         api_key=os.environ["LLM_API_KEY"],
         timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
         max_retries=0,
+    )
+
+
+def build_provider() -> LLMProvider:
+    provider_name = os.getenv(
+        "LLM_PROVIDER",
+        "openai_compatible",
+    ).strip().lower()
+
+    if provider_name == "openai_compatible":
+        return OpenAICompatibleProvider(
+            client=build_client(),
+        )
+
+    if provider_name == "ollama_native":
+        return OllamaNativeProvider(
+            base_url=os.getenv(
+                "OLLAMA_BASE_URL",
+                "http://localhost:11434",
+            ),
+            timeout_seconds=float(
+                os.getenv(
+                    "LLM_TIMEOUT_SECONDS",
+                    "30",
+                )
+            ),
+        )
+
+    raise RuntimeError(
+        f"Unsupported LLM_PROVIDER: {provider_name}"
     )
 
 
@@ -129,7 +165,12 @@ def _retry_after_seconds(exc: Exception) -> float | None:
     if response is None:
         return None
 
-    value = response.headers.get("retry-after")
+    headers = getattr(response, "headers", None)
+
+    if headers is None:
+        return None
+
+    value = headers.get("retry-after")
 
     if not value:
         return None
@@ -143,22 +184,39 @@ def _retry_after_seconds(exc: Exception) -> float | None:
         retry_at = parsedate_to_datetime(value)
 
         if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=timezone.utc)
+            retry_at = retry_at.replace(
+                tzinfo=timezone.utc
+            )
 
         return max(
             0.0,
-            (retry_at - datetime.now(timezone.utc)).total_seconds(),
+            (
+                retry_at
+                - datetime.now(timezone.utc)
+            ).total_seconds(),
         )
     except Exception:
         return None
 
-
 def _is_retryable(exc: Exception) -> bool:
-    if isinstance(exc, (APITimeoutError, APIConnectionError, RateLimitError)):
+    if isinstance(
+        exc,
+        (
+            APITimeoutError,
+            APIConnectionError,
+            RateLimitError,
+            httpx.TimeoutException,
+            httpx.ConnectError,
+        ),
+    ):
         return True
 
     if isinstance(exc, APIStatusError):
         return exc.status_code >= 500
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        return status_code == 429 or status_code >= 500
 
     return False
 
@@ -177,30 +235,47 @@ def _usage_value(usage: Any, name: str) -> int:
 
 def _write_cost_log(
     *,
+    provider: str,
     model: str,
     prompt_version: str,
-    usage: Any,
+    input_tokens: int,
+    output_tokens: int,
+    total_tokens: int,
     duration_ms: int,
     repair_count: int,
     attempts: int,
 ) -> None:
-    COST_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    COST_LOG_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(
+            timezone.utc
+        ).isoformat(),
+        "provider": provider,
         "prompt_version": prompt_version,
         "model": model,
-        "input_tokens": _usage_value(usage, "prompt_tokens"),
-        "output_tokens": _usage_value(usage, "completion_tokens"),
-        "total_tokens": _usage_value(usage, "total_tokens"),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
         "duration_ms": duration_ms,
         "repair_count": repair_count,
         "transport_attempts": attempts,
     }
 
-    with COST_LOG_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-
+    with COST_LOG_PATH.open(
+        "a",
+        encoding="utf-8",
+    ) as handle:
+        handle.write(
+            json.dumps(
+                record,
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
 
 def _call_model(
     *,
@@ -210,8 +285,24 @@ def _call_model(
 ) -> str:
     model = os.environ["LLM_MODEL"]
     prompt_version = get_prompt_version()
+    provider_name = os.getenv(
+        "LLM_PROVIDER",
+        "openai_compatible",
+    ).strip().lower()
 
-    max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+    max_retries = int(
+        os.getenv(
+            "LLM_MAX_RETRIES",
+            "3",
+        )
+    )
+
+    max_tokens = int(
+        os.getenv(
+            "LLM_MAX_OUTPUT_TOKENS",
+            "1024",
+        )
+    )
 
     last_exc: Exception | None = None
 
@@ -219,36 +310,36 @@ def _call_model(
         started = time.perf_counter()
 
         try:
-            response = build_client().chat.completions.create(
+            provider = build_provider()
+
+            response = provider.complete(
                 model=model,
-                temperature=0,
-                max_tokens=1024,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt,
-                    },
-                    {
-                        "role": "user",
-                        "content": user_message,
-                    },
-                ],
+                system_prompt=system_prompt,
+                user_message=user_message,
+                max_tokens=max_tokens,
             )
 
             duration_ms = int(
-                (time.perf_counter() - started) * 1000
+                (
+                    time.perf_counter()
+                    - started
+                )
+                * 1000
             )
 
             _write_cost_log(
+                provider=provider_name,
                 model=model,
                 prompt_version=prompt_version,
-                usage=getattr(response, "usage", None),
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                total_tokens=response.total_tokens,
                 duration_ms=duration_ms,
                 repair_count=repair_count,
                 attempts=attempt + 1,
             )
 
-            return response.choices[0].message.content or ""
+            return response.content
 
         except Exception as exc:
             last_exc = exc
@@ -259,20 +350,36 @@ def _call_model(
             if attempt >= max_retries:
                 break
 
-            retry_after = _retry_after_seconds(exc)
+            retry_after = _retry_after_seconds(
+                exc
+            )
 
             if retry_after is not None:
                 delay = retry_after
             else:
-                delay = (2 ** attempt) + random.uniform(0.0, 0.25)
+                delay = (
+                    2 ** attempt
+                ) + random.uniform(
+                    0.0,
+                    0.25,
+                )
 
             time.sleep(delay)
 
-    if isinstance(last_exc, APITimeoutError):
-        raise LLMUnavailableError("timeout") from last_exc
+    if isinstance(
+        last_exc,
+        (
+            APITimeoutError,
+            httpx.TimeoutException,
+        ),
+    ):
+        raise LLMUnavailableError(
+            "timeout"
+        ) from last_exc
 
-    raise LLMUnavailableError("provider unavailable") from last_exc
-
+    raise LLMUnavailableError(
+        "provider unavailable"
+    ) from last_exc
 
 def _repair_once(
     *,

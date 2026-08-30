@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 import main
 from src.llm import client as llm_client
+from src.llm.provider import OpenAICompatibleProvider
 from src.llm.client import (
     TriageOutputError,
     _extract_json_object,
@@ -87,7 +88,7 @@ def test_invalid_first_answer_repairs_exactly_once():
         ]
     )
 
-    with patch("src.llm.client.build_client", return_value=fake):
+    with patch("src.llm.client.build_provider", return_value=OpenAICompatibleProvider(fake)):
         result = call_triage_model("The API crashes on startup.")
 
     assert result.category == "bug"
@@ -108,7 +109,7 @@ def test_invalid_enum_repairs_once():
 
     fake = FakeClient([invalid, VALID_JSON])
 
-    with patch("src.llm.client.build_client", return_value=fake):
+    with patch("src.llm.client.build_provider", return_value=OpenAICompatibleProvider(fake)):
         result = call_triage_model("Something broke.")
 
     assert result.category == "bug"
@@ -126,7 +127,7 @@ def test_second_failure_quarantines_and_stops(tmp_path):
     quarantine = tmp_path / "quarantine.jsonl"
 
     with (
-        patch("src.llm.client.build_client", return_value=fake),
+        patch("src.llm.client.build_provider", return_value=OpenAICompatibleProvider(fake)),
         patch.object(llm_client, "QUARANTINE_PATH", quarantine),
     ):
         with pytest.raises(TriageOutputError):
