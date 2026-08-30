@@ -1,52 +1,22 @@
-Act as a backend developer working with Python, FastAPI, and SQLite.
+Build me a small FastAPI task API using Python and PostgreSQL.
 
-I have an existing in-memory CRUD Task API and I want you to migrate its storage layer to SQLite without changing the public API behavior.
+Use psycopg to connect to the database. The database should have a tasks table with id, title, done, created_at, and updated_at.
 
-Requirements:
+When the app starts, create the table if it does not exist and insert 3 default tasks only if the table is empty.
 
-- Keep the same CRUD endpoints:
-  - GET /tasks
-  - GET /tasks/{id}
-  - POST /tasks
-  - PUT /tasks/{id}
-  - DELETE /tasks/{id}
+I need these endpoints:
+GET /tasks
+GET /tasks/{id}
+POST /tasks
+PUT /tasks/{id}
+DELETE /tasks/{id}
 
-- Use Python's built-in sqlite3 library.
+Use parameterized SQL queries, not string formatting.
 
-- Store data in a local SQLite database file named tasks.db.
+The database password and connection details should come from environment variables, not be hardcoded.
 
-- Create a tasks table automatically if it does not exist.
+Run PostgreSQL in Docker and use a persistent volume so the data survives container restarts.
 
-- The tasks table must include:
-  - id as an integer primary key
-  - title as text
-  - done stored as 0 or 1
+Also create a Dockerfile and docker-compose setup so the whole project can be started with Docker Compose.
 
-- Seed exactly three example tasks only if the tasks table is empty.
-- Restarting the server must not duplicate the seeded tasks.
-
-- GET /tasks must read tasks from SQLite.
-- GET /tasks/{id} must query SQLite by id.
-- POST /tasks must insert a new task into SQLite and let SQLite generate the id.
-- PUT /tasks/{id} must update the matching database row.
-- DELETE /tasks/{id} must delete the matching database row.
-
-Keep the same validation and HTTP behavior as the existing API:
-
-- Missing or empty title -> HTTP 400 with a JSON error response.
-- Unknown task id -> HTTP 404 with a JSON error response.
-- Successful creation -> HTTP 201.
-- Successful deletion -> HTTP 204 with an empty response body.
-- Normal successful reads and updates -> HTTP 200.
-
-Use parameterized SQL queries with ? placeholders for every value that comes from user input. Do not build SQL by concatenating user-provided values.
-
-The data must survive stopping and restarting the FastAPI server.
-
-Keep the implementation simple and readable. Do not add an ORM or unnecessary dependencies.
-
-Return the complete working Python code for the migrated API and briefly explain:
-1. how database initialization works,
-2. how seeding avoids duplicates,
-3. how each CRUD endpoint now talks to SQLite,
-4. where parameterized queries are used.
+Keep the code simple and separated enough so the database code is not mixed everywhere inside the route handlers.

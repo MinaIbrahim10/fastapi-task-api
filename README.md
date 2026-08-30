@@ -543,3 +543,163 @@ A3 — containerized PostgreSQL persistence
 ```
 
 The primary lesson is that application behavior can remain stable while infrastructure and persistence evolve underneath it.
+
+---
+
+## AI vs Me
+
+For the AI comparison, I first wrote a short prompt from memory and asked an AI coding agent to build a PostgreSQL version of the same Task API inside a quarantined `ai-version/` directory.
+
+### Prompt V1
+
+```text
+Build me a small FastAPI task API using Python and PostgreSQL.
+
+Use psycopg to connect to the database. The database should have a tasks table with id, title, done, created_at, and updated_at.
+
+When the app starts, create the table if it does not exist and insert 3 default tasks only if the table is empty.
+
+I need these endpoints:
+GET /tasks
+GET /tasks/{id}
+POST /tasks
+PUT /tasks/{id}
+DELETE /tasks/{id}
+
+Use parameterized SQL queries, not string formatting.
+
+The database password and connection details should come from environment variables, not be hardcoded.
+
+Run PostgreSQL in Docker and use a persistent volume so the data survives container restarts.
+
+Also create a Dockerfile and docker-compose setup so the whole project can be started with Docker Compose.
+
+Keep the code simple and separated enough so the database code is not mixed everywhere inside the route handlers.
+```
+
+### What AI V1 did well
+
+The first AI version successfully produced a working PostgreSQL-backed FastAPI service.
+
+It correctly:
+
+- used Psycopg and parameterized SQL;
+- created the table automatically;
+- seeded three tasks only when the table was empty;
+- implemented the five CRUD endpoints;
+- returned `201` for task creation;
+- returned `404` for an unknown task;
+- used environment-based database configuration;
+- used a named PostgreSQL Docker volume;
+- preserved a created task after a full `docker compose down` followed by `docker compose up`.
+
+### Differences between AI V1 and my implementation
+
+#### 1. Existing API contract
+
+AI V1 returned:
+
+```json
+{
+  "id": 4,
+  "title": "Example",
+  "done": false,
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+
+My implementation preserved the original public Task API shape:
+
+```json
+{
+  "id": 4,
+  "title": "Example",
+  "done": false
+}
+```
+
+The storage migration therefore stayed an implementation detail instead of changing the public API.
+
+#### 2. Error behavior
+
+AI V1 used FastAPI's standard error format such as:
+
+```json
+{
+  "detail": "Task not found"
+}
+```
+
+My version preserved the error contract from the earlier assignment instead of silently changing endpoint behavior during the storage migration.
+
+#### 3. Container design
+
+AI V1 initially used a single-stage `python:3.13-slim` Docker image.
+
+My implementation uses a multi-stage Alpine build, copies only the runtime virtual environment, and runs the application as a non-root user.
+
+The measured image-size experiment reduced the image from approximately 62.51 MiB to 37.70 MiB, a reduction of about 39.70%.
+
+#### 4. Health checking
+
+AI V1 did not initially include a real API health check.
+
+My implementation provides `/health` and performs an actual PostgreSQL `SELECT 1` round trip. The Docker image also has an HTTP `HEALTHCHECK`, allowing Docker or an orchestrator/load balancer to distinguish a running process from a healthy service.
+
+#### 5. Redis integration
+
+AI V1 only created the API and PostgreSQL services.
+
+My implementation also includes Redis in Docker Compose, verifies it with `PING`, and waits for both PostgreSQL and Redis health before starting the API.
+
+#### 6. Additional database behavior
+
+My implementation also retains the earlier API features such as filtering, searching, sorting, pagination, statistics, and reset behavior while keeping SQL access isolated in the repository layer.
+
+### Rematch
+
+After reviewing V1, I wrote a second prompt describing the missing production-style requirements.
+
+```text
+Improve the PostgreSQL FastAPI version you created in ai-version.
+
+Keep the same five CRUD endpoints, but this time preserve the existing Task API behavior exactly. Responses should only expose id, title, and done. Unknown task IDs should return a JSON error response with the same style as the existing API.
+
+Keep all SQL parameterized and database configuration in environment variables.
+
+Also improve the Docker setup:
+- use a multi-stage Alpine build
+- run the API container as a non-root user
+- add a real API health check
+- add Redis as another Compose service and verify it with PING at startup
+- make the API wait for PostgreSQL and Redis health
+- keep PostgreSQL data in a named volume
+
+Add a GET /health endpoint that checks PostgreSQL with SELECT 1.
+
+Keep database code separated from route handlers.
+
+Do not modify anything outside ai-version/.
+```
+
+### AI V2 result
+
+The rematch corrected the main V1 weaknesses.
+
+V2:
+
+- restored responses to `id`, `title`, and `done`;
+- restored the previous validation/error behavior;
+- added a PostgreSQL-backed `/health`;
+- added Redis and startup `PING`;
+- added Compose health dependencies;
+- changed to a multi-stage Alpine image;
+- changed the API container to a non-root user;
+- added an HTTP Docker health check;
+- kept PostgreSQL in a named persistent volume.
+
+The comparison showed that the initial AI prompt was enough to produce a functional CRUD system, but it did not automatically preserve all of the earlier API contract or include the production-oriented container features. Those appeared only after they were made explicit in the rematch prompt.
+
+This was useful because it separated two different skills: generating a working implementation and engineering a migration that preserves existing behavior while improving operational quality.
+

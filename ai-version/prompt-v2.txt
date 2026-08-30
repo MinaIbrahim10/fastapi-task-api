@@ -1,82 +1,19 @@
-Act as a backend developer working with Python, FastAPI, and SQLite.
+Improve the PostgreSQL FastAPI version you created in ai-version.
 
-I have an existing in-memory CRUD Task API and I want you to migrate only its storage layer to SQLite while preserving the existing API contract exactly.
+Keep the same five CRUD endpoints, but this time preserve the existing Task API behavior exactly. Responses should only expose id, title, and done. Unknown task IDs should return a JSON error response with the same style as the existing API.
 
-Use Python's built-in sqlite3 library. Do not use an ORM.
+Keep all SQL parameterized and database configuration in environment variables.
 
-The SQLite database file must be named tasks.db and must be created automatically.
+Also improve the Docker setup:
+- use a multi-stage Alpine build
+- run the API container as a non-root user
+- add a real API health check
+- add Redis as another Compose service and verify it with PING at startup
+- make the API wait for PostgreSQL and Redis health
+- keep PostgreSQL data in a named volume
 
-Create a tasks table automatically if it does not exist with these columns:
+Add a GET /health endpoint that checks PostgreSQL with SELECT 1.
 
-- id INTEGER PRIMARY KEY
-- title TEXT NOT NULL
-- done INTEGER NOT NULL DEFAULT 0
+Keep database code separated from route handlers.
 
-Seed exactly these three tasks, and only when the table is empty:
-
-1. id=1, title="Learn FastAPI", done=false
-2. id=2, title="Build CRUD API", done=false
-3. id=3, title="Push project to GitHub", done=false
-
-Restarting the application must never duplicate the seed rows.
-
-Preserve these CRUD endpoints:
-
-- GET /tasks
-- GET /tasks/{id}
-- POST /tasks
-- PUT /tasks/{id}
-- DELETE /tasks/{id}
-
-Required behavior:
-
-GET /tasks
-- Return all tasks.
-- Preserve the response shape:
-  {"id": integer, "title": string, "done": boolean}
-
-GET /tasks/{id}
-- Query SQLite using a parameterized query.
-- Unknown IDs must return HTTP 404 with:
-  {"error":"Task <id> not found"}
-
-POST /tasks
-- Missing, null, empty, or whitespace-only titles must return HTTP 400 with:
-  {"error":"Title is required and cannot be empty"}
-- Strip surrounding whitespace from valid titles.
-- Insert using a parameterized SQL query.
-- Let SQLite generate the new id.
-- New tasks must have done=false.
-- Successful creation must return HTTP 201.
-
-PUT /tasks/{id}
-- Allow title, done, or both to be updated.
-- A body containing neither field must return HTTP 400 with:
-  {"error":"At least one field is required"}
-- An empty or whitespace-only title must return HTTP 400 with:
-  {"error":"Title cannot be empty"}
-- Unknown IDs must return HTTP 404 with:
-  {"error":"Task <id> not found"}
-- Use parameterized SQL.
-- Successful updates return HTTP 200.
-
-DELETE /tasks/{id}
-- Unknown IDs must return HTTP 404 with:
-  {"error":"Task <id> not found"}
-- Use a parameterized SQL DELETE.
-- Successful deletion must return HTTP 204 with an empty body.
-
-Persistence requirements:
-
-- Every CRUD operation must read from or write to SQLite.
-- No in-memory task list may be used as application storage.
-- Data must survive stopping and restarting the server.
-- Seed rows must only be inserted when the table is empty.
-- All user-provided values must use ? placeholders.
-- Never concatenate user input into SQL strings.
-
-Keep the code simple, explicit, and readable.
-
-Do not add search, sorting, statistics, timestamps, indexes, reset endpoints, or other extras. This rematch is specifically about reproducing the original CRUD API contract accurately.
-
-Return a complete working FastAPI implementation.
+Do not modify anything outside ai-version/.

@@ -1,178 +1,110 @@
-import sqlite3
-from pathlib import Path
+from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+import redis
+
+import database
+from models import Task, TaskCreate, TaskUpdate
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    database.initialize_database()
+    redis_client = redis.Redis.from_url(
+        os.getenv("REDIS_URL", "redis://redis:6379/0")
+    )
+    redis_client.ping()
+    app.state.redis = redis_client
+    try:
+        yield
+    finally:
+        redis_client.close()
 
 
 app = FastAPI(
     title="Task API",
     version="1.1",
     description="A FastAPI application for managing tasks.",
+    lifespan=lifespan,
 )
-
-DATABASE_PATH = Path(__file__).with_name("tasks.db")
-INITIAL_TASKS = [
-    ("Learn FastAPI", 0),
-    ("Build Task API", 0),
-    ("Test the API", 0),
-]
-
-
-class TaskCreate(BaseModel):
-    title: str
-
-
-class TaskUpdate(BaseModel):
-    title: str | None = None
-    done: bool | None = None
-
-
-def get_connection() -> sqlite3.Connection:
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-def task_to_dict(row: sqlite3.Row) -> dict:
-    return {
-        "id": row["id"],
-        "title": row["title"],
-        "done": bool(row["done"]),
-    }
-
-
-def initialize_database() -> None:
-    with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY,
-                title TEXT NOT NULL,
-                done INTEGER NOT NULL CHECK (done IN (0, 1))
-            )
-            """
-        )
-        task_count = connection.execute(
-            "SELECT COUNT(*) FROM tasks"
-        ).fetchone()[0]
-        if task_count == 0:
-            connection.executemany(
-                "INSERT INTO tasks (title, done) VALUES (?, ?)",
-                INITIAL_TASKS,
-            )
-
-
-initialize_database()
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
-    request: Request,
-    exc: RequestValidationError,
+    request: Request, exc: RequestValidationError
 ):
     return JSONResponse(
         status_code=400,
-        content={"error": "Invalid request data"},
+        content={"error": "Invalid request body or parameters"},
     )
 
 
-@app.get("/tasks")
+def not_found(task_id: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"error": f"Task {task_id} not found"},
+    )
+
+
+@app.get("/tasks", response_model=list[Task])
 def list_tasks():
-    with get_connection() as connection:
-        rows = connection.execute(
-            "SELECT id, title, done FROM tasks ORDER BY id"
-        ).fetchall()
-    return [task_to_dict(row) for row in rows]
+    return database.list_tasks()
 
 
-@app.get("/tasks/{task_id}")
+@app.get("/tasks/{task_id}", response_model=Task)
 def get_task(task_id: int):
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT id, title, done FROM tasks WHERE id = ?",
-            (task_id,),
-        ).fetchone()
-    if row is None:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"Task {task_id} not found"},
-        )
-    return task_to_dict(row)
+    task = database.get_task(task_id)
+    if task is None:
+        return not_found(task_id)
+    return task
 
 
-@app.post("/tasks", status_code=status.HTTP_201_CREATED)
-def create_task(task_data: TaskCreate):
-    title = task_data.title.strip()
-    if not title:
+@app.post("/tasks", response_model=Task, status_code=status.HTTP_201_CREATED)
+def create_task(task: TaskCreate):
+    if task.title is None or not task.title.strip():
         return JSONResponse(
             status_code=400,
-            content={"error": "Title cannot be empty"},
+            content={"error": "Title is required and cannot be empty"},
         )
-    with get_connection() as connection:
-        cursor = connection.execute(
-            "INSERT INTO tasks (title, done) VALUES (?, ?)",
-            (title, 0),
-        )
-        row = connection.execute(
-            "SELECT id, title, done FROM tasks WHERE id = ?",
-            (cursor.lastrowid,),
-        ).fetchone()
-    return task_to_dict(row)
+    return database.create_task(task.title.strip())
 
 
-@app.put("/tasks/{task_id}")
-def update_task(task_id: int, task_data: TaskUpdate):
-    with get_connection() as connection:
-        existing_task = connection.execute(
-            "SELECT id FROM tasks WHERE id = ?",
-            (task_id,),
-        ).fetchone()
-        if existing_task is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"Task {task_id} not found"},
-            )
-        if task_data.title is None and task_data.done is None:
+@app.put("/tasks/{task_id}", response_model=Task)
+def update_task(task_id: int, task: TaskUpdate):
+    if database.get_task(task_id) is None:
+        return not_found(task_id)
+
+    changes = task.model_dump(exclude_unset=True)
+    if not changes or all(value is None for value in changes.values()):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "At least one field is required"},
+        )
+    if task.title is not None:
+        if not task.title.strip():
             return JSONResponse(
                 status_code=400,
-                content={"error": "No update data provided"},
+                content={"error": "Title cannot be empty"},
             )
-        if task_data.title is not None:
-            title = task_data.title.strip()
-            if not title:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "Title cannot be empty"},
-                )
-            connection.execute(
-                "UPDATE tasks SET title = ? WHERE id = ?",
-                (title, task_id),
-            )
-        if task_data.done is not None:
-            connection.execute(
-                "UPDATE tasks SET done = ? WHERE id = ?",
-                (int(task_data.done), task_id),
-            )
-        row = connection.execute(
-            "SELECT id, title, done FROM tasks WHERE id = ?",
-            (task_id,),
-        ).fetchone()
-    return task_to_dict(row)
+        changes["title"] = task.title.strip()
+
+    updated_task = database.update_task(task_id, changes)
+    if updated_task is None:
+        return not_found(task_id)
+    return updated_task
 
 
 @app.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(task_id: int):
-    with get_connection() as connection:
-        cursor = connection.execute(
-            "DELETE FROM tasks WHERE id = ?",
-            (task_id,),
-        )
-    if cursor.rowcount == 0:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"Task {task_id} not found"},
-        )
+    if not database.delete_task(task_id):
+        return not_found(task_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/health")
+def health():
+    database.check_health()
+    return {"status": "ok"}

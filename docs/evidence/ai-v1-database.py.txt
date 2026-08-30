@@ -1,0 +1,109 @@
+import os
+from collections.abc import Mapping
+from typing import Any
+
+import psycopg
+from psycopg.rows import dict_row
+
+
+DEFAULT_TASKS = (
+    ("Learn FastAPI", False),
+    ("Build a task API", False),
+    ("Run it with Docker Compose", False),
+)
+
+
+def get_connection():
+    return psycopg.connect(
+        host=os.getenv("POSTGRES_HOST", "db"),
+        port=os.getenv("POSTGRES_PORT", "5432"),
+        dbname=os.getenv("POSTGRES_DB", "tasks"),
+        user=os.getenv("POSTGRES_USER", "tasks"),
+        password=os.environ["POSTGRES_PASSWORD"],
+        row_factory=dict_row,
+    )
+
+
+def initialize_database() -> None:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id BIGSERIAL PRIMARY KEY,
+                    title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+                    done BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute("SELECT COUNT(*) AS count FROM tasks")
+            if cursor.fetchone()["count"] == 0:
+                cursor.executemany(
+                    "INSERT INTO tasks (title, done) VALUES (%s, %s)",
+                    DEFAULT_TASKS,
+                )
+
+
+def list_tasks() -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, title, done, created_at, updated_at "
+                "FROM tasks ORDER BY id"
+            )
+            return cursor.fetchall()
+
+
+def get_task(task_id: int) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, title, done, created_at, updated_at "
+                "FROM tasks WHERE id = %s",
+                (task_id,),
+            )
+            return cursor.fetchone()
+
+
+def create_task(title: str) -> dict[str, Any]:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO tasks (title)
+                VALUES (%s)
+                RETURNING id, title, done, created_at, updated_at
+                """,
+                (title,),
+            )
+            return cursor.fetchone()
+
+
+def update_task(
+    task_id: int, changes: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    title = changes.get("title")
+    done = changes.get("done")
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET title = COALESCE(%s, title),
+                    done = COALESCE(%s, done),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING id, title, done, created_at, updated_at
+                """,
+                (title, done, task_id),
+            )
+            return cursor.fetchone()
+
+
+def delete_task(task_id: int) -> bool:
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+            return cursor.rowcount == 1
