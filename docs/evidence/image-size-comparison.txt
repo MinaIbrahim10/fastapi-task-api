@@ -1,0 +1,7 @@
+Docker image size comparison
+============================
+
+Single-stage baseline: 65548027 bytes (62.51 MiB)
+Multi-stage image:     66209682 bytes (63.14 MiB)
+Difference:            -661655 bytes (-0.63 MiB)
+Reduction:             -1.01%
