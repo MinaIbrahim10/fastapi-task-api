@@ -1,15 +1,15 @@
 {
   "summary": {
-    "date_utc": "2026-08-30T19:47:41.671440+00:00",
+    "date_utc": "2026-08-30T19:41:09.053324+00:00",
     "prompt_version": "v1",
     "total_cases": 8,
-    "trusted_responses": 8,
-    "category_matches": 7,
-    "team_matches": 8,
-    "exact_matches": 7,
-    "category_accuracy": 0.875,
-    "team_accuracy": 1.0,
-    "exact_accuracy": 0.875
+    "trusted_responses": 5,
+    "category_matches": 5,
+    "team_matches": 5,
+    "exact_matches": 5,
+    "category_accuracy": 0.625,
+    "team_accuracy": 0.625,
+    "exact_accuracy": 0.625
   },
   "results": [
     {
@@ -27,9 +27,9 @@
         "category": "bug",
         "urgency": "high",
         "suggested_team": "engineering",
-        "confidence": 0.98,
+        "confidence": 0.95,
         "needs_review": false,
-        "reason": "The message describes a reproducible application crash when performing a specific action."
+        "reason": "The message reports a crash that occurs during a specific file upload action."
       }
     },
     {
@@ -67,7 +67,7 @@
         "category": "billing",
         "urgency": "high",
         "suggested_team": "billing",
-        "confidence": 0.98,
+        "confidence": 0.99,
         "needs_review": false,
         "reason": "The user reports being double-charged for a subscription."
       }
@@ -76,61 +76,25 @@
       "id": "account-login",
       "input": "I cannot sign in to my account after changing my password.",
       "expected_category": "account",
-      "actual_category": "bug",
       "expected_team": "support",
-      "actual_team": "support",
-      "category_match": false,
-      "team_match": true,
-      "exact_match": false,
-      "trusted_response": true,
-      "output": {
-        "category": "bug",
-        "urgency": "high",
-        "suggested_team": "support",
-        "confidence": 0.95,
-        "needs_review": false,
-        "reason": "The user is experiencing a critical login failure immediately following an action (password change)."
-      }
+      "trusted_response": false,
+      "error": "The model could not produce a valid triage response after one repair attempt."
     },
     {
       "id": "security-token",
       "input": "I found what looks like another user's access token in an API response.",
       "expected_category": "security",
-      "actual_category": "security",
       "expected_team": "security",
-      "actual_team": "security",
-      "category_match": true,
-      "team_match": true,
-      "exact_match": true,
-      "trusted_response": true,
-      "output": {
-        "category": "security",
-        "urgency": "critical",
-        "suggested_team": "security",
-        "confidence": 1.0,
-        "needs_review": true,
-        "reason": "The message reports a potential exposure of sensitive user access tokens."
-      }
+      "trusted_response": false,
+      "error": "The model could not produce a valid triage response after one repair attempt."
     },
     {
       "id": "ambiguous-other",
       "input": "Something feels strange with the product but I cannot explain what happened.",
       "expected_category": "other",
-      "actual_category": "other",
       "expected_team": "support",
-      "actual_team": "support",
-      "category_match": true,
-      "team_match": true,
-      "exact_match": true,
-      "trusted_response": true,
-      "output": {
-        "category": "other",
-        "urgency": "low",
-        "suggested_team": "support",
-        "confidence": 0.3,
-        "needs_review": true,
-        "reason": "The message is too vague to classify as a specific bug or issue."
-      }
+      "trusted_response": false,
+      "error": "The model could not produce a valid triage response after one repair attempt."
     },
     {
       "id": "prompt-injection",
@@ -149,7 +113,7 @@
         "suggested_team": "support",
         "confidence": 0.2,
         "needs_review": true,
-        "reason": "The message is an adversarial prompt and does not describe a product support issue."
+        "reason": "The message contains adversarial instructions rather than a support issue."
       }
     },
     {

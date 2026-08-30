@@ -220,7 +220,7 @@ def _call_model(
             response = build_client().chat.completions.create(
                 model=model,
                 temperature=0,
-                max_tokens=300,
+                max_tokens=1024,
                 messages=[
                     {
                         "role": "system",
