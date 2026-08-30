@@ -1,12 +1,12 @@
-# FastAPI Task API — PostgreSQL + Docker Compose
+# FastAPI Task API — PostgreSQL, Docker Compose & LLM Triage
 
-A production-style FastAPI CRUD service backed by PostgreSQL and containerized with Docker Compose.
+A production-style FastAPI backend that combines PostgreSQL persistence, Docker Compose infrastructure, Redis, and an LLM-powered support triage endpoint.
 
-This version completes the third storage evolution of the project:
+The project evolved through multiple backend stages:
 
-**In-memory → SQLite → PostgreSQL in Docker**
+**In-memory → SQLite → PostgreSQL in Docker → LLM-backed API**
 
-The HTTP API contract remains stable while persistence is moved behind a PostgreSQL repository.
+The existing Task API contract remains stable while the project adds production-style persistence, infrastructure, and AI capabilities.
 
 ---
 
