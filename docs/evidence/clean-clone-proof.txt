@@ -1,0 +1,20 @@
+Clean clone verification
+========================
+
+Source:
+local branch w3-a3-postgres-compose
+
+Setup:
+cp .env.example .env
+docker compose up -d --build
+
+Results:
+- Compose build succeeded
+- API became healthy
+- PostgreSQL became healthy
+- Redis became healthy
+- Initial tasks were available
+- Redis PING returned PONG
+
+Result:
+PASS
