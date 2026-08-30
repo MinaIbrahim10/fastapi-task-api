@@ -269,7 +269,7 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from src.llm.client import call_triage_model
+from src.llm.client import TriageOutputError, call_triage_model
 from src.llm.schema import TriageRequest, TriageResponse
 from src.llm.stub import get_stub_triage
 
@@ -313,4 +313,16 @@ def ai_triage(payload: TriageRequest):
     if os.getenv("LLM_STUB", "0") == "1":
         return get_stub_triage()
 
-    return call_triage_model(payload.text)
+    try:
+        return call_triage_model(payload.text)
+    except TriageOutputError:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "LLM output validation failed",
+                "message": (
+                    "The model could not produce a valid structured response "
+                    "after one repair attempt."
+                ),
+            },
+        )
