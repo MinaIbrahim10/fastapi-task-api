@@ -4,3 +4,4 @@ pydantic
 psycopg[binary]
 python-dotenv
 redis
+openai

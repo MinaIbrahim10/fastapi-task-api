@@ -257,3 +257,64 @@ def reset_tasks():
         "message": "Tasks reset",
         "tasks": tasks,
     }
+
+
+# ---------------------------------------------------------------------------
+# AI triage endpoint — FlyRank Week 7 A17
+# ---------------------------------------------------------------------------
+
+import os
+
+from fastapi import Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from src.llm.schema import TriageRequest, TriageResponse
+from src.llm.stub import get_stub_triage
+
+
+@app.exception_handler(RequestValidationError)
+async def a17_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    if request.url.path != "/ai/triage":
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
+        )
+
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    loc = first.get("loc", [])
+    field = loc[-1] if loc else "request"
+
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": "Invalid request",
+            "field": str(field),
+            "message": first.get("msg", "Request validation failed"),
+        },
+    )
+
+
+@app.post(
+    "/ai/triage",
+    response_model=TriageResponse,
+    summary="AI support-message triage",
+    description=(
+        "Classifies one software/product support message into a closed, "
+        "schema-validated triage decision."
+    ),
+)
+def ai_triage(payload: TriageRequest):
+    if os.getenv("LLM_STUB", "0") == "1":
+        return get_stub_triage()
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "Real LLM integration is not enabled until Stage 2."
+        },
+    )
