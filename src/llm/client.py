@@ -1,11 +1,20 @@
 import json
 import os
+import random
+import time
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    OpenAI,
+    RateLimitError,
+)
 from pydantic import ValidationError
 
 from .schema import TriageResponse
@@ -19,10 +28,15 @@ PROMPT_FILES = {
 }
 
 QUARANTINE_PATH = ROOT / "logs" / "quarantine.jsonl"
+COST_LOG_PATH = ROOT / "logs" / "llm-calls.jsonl"
 
 
 class TriageOutputError(RuntimeError):
-    """Raised when the model fails schema validation even after one repair."""
+    pass
+
+
+class LLMUnavailableError(RuntimeError):
+    pass
 
 
 def get_prompt_version() -> str:
@@ -45,29 +59,16 @@ def build_client() -> OpenAI:
         base_url=os.environ["LLM_BASE_URL"],
         api_key=os.environ["LLM_API_KEY"],
         timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
-        # We own the retry policy. Stage 4 will add selective transport retries.
         max_retries=0,
     )
 
 
 def _extract_json_object(raw: str) -> dict[str, Any]:
-    """
-    Recover one JSON object from common LLM formatting mistakes.
-
-    Accepted:
-    - raw JSON
-    - ```json ... ``` fences
-    - explanatory text before/after the JSON
-
-    This function does NOT make invalid schema values valid.
-    """
-
     text = raw.strip()
 
     if not text:
         raise ValueError("Model returned an empty response")
 
-    # Remove a common Markdown fence wrapper.
     if text.startswith("```"):
         lines = text.splitlines()
 
@@ -79,7 +80,6 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
 
         text = "\n".join(lines).strip()
 
-    # Fast path: exactly one JSON document.
     try:
         parsed = json.loads(text)
         if not isinstance(parsed, dict):
@@ -88,8 +88,6 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    # Recovery path: locate the first object and let JSONDecoder determine
-    # where that object actually ends. Any prose around it is ignored.
     start = text.find("{")
 
     if start == -1:
@@ -123,28 +121,155 @@ def _validation_message(exc: Exception) -> str:
     return str(exc)
 
 
+def _retry_after_seconds(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+
+    if response is None:
+        return None
+
+    value = response.headers.get("retry-after")
+
+    if not value:
+        return None
+
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+
+    try:
+        retry_at = parsedate_to_datetime(value)
+
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+
+        return max(
+            0.0,
+            (retry_at - datetime.now(timezone.utc)).total_seconds(),
+        )
+    except Exception:
+        return None
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, (APITimeoutError, APIConnectionError, RateLimitError)):
+        return True
+
+    if isinstance(exc, APIStatusError):
+        return exc.status_code >= 500
+
+    return False
+
+
+def _usage_value(usage: Any, name: str) -> int:
+    if usage is None:
+        return 0
+
+    value = getattr(usage, name, None)
+
+    if value is None and isinstance(usage, dict):
+        value = usage.get(name)
+
+    return int(value or 0)
+
+
+def _write_cost_log(
+    *,
+    model: str,
+    prompt_version: str,
+    usage: Any,
+    duration_ms: int,
+    repair_count: int,
+    attempts: int,
+) -> None:
+    COST_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "prompt_version": prompt_version,
+        "model": model,
+        "input_tokens": _usage_value(usage, "prompt_tokens"),
+        "output_tokens": _usage_value(usage, "completion_tokens"),
+        "total_tokens": _usage_value(usage, "total_tokens"),
+        "duration_ms": duration_ms,
+        "repair_count": repair_count,
+        "transport_attempts": attempts,
+    }
+
+    with COST_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def _call_model(
     *,
     system_prompt: str,
     user_message: str,
+    repair_count: int,
 ) -> str:
-    response = build_client().chat.completions.create(
-        model=os.environ["LLM_MODEL"],
-        temperature=0,
-        max_tokens=300,
-        messages=[
-            {
-                "role": "system",
-                "content": system_prompt,
-            },
-            {
-                "role": "user",
-                "content": user_message,
-            },
-        ],
-    )
+    model = os.environ["LLM_MODEL"]
+    prompt_version = get_prompt_version()
 
-    return response.choices[0].message.content or ""
+    max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+
+    last_exc: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        started = time.perf_counter()
+
+        try:
+            response = build_client().chat.completions.create(
+                model=model,
+                temperature=0,
+                max_tokens=300,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": user_message,
+                    },
+                ],
+            )
+
+            duration_ms = int(
+                (time.perf_counter() - started) * 1000
+            )
+
+            _write_cost_log(
+                model=model,
+                prompt_version=prompt_version,
+                usage=getattr(response, "usage", None),
+                duration_ms=duration_ms,
+                repair_count=repair_count,
+                attempts=attempt + 1,
+            )
+
+            return response.choices[0].message.content or ""
+
+        except Exception as exc:
+            last_exc = exc
+
+            if not _is_retryable(exc):
+                raise
+
+            if attempt >= max_retries:
+                break
+
+            retry_after = _retry_after_seconds(exc)
+
+            if retry_after is not None:
+                delay = retry_after
+            else:
+                delay = (2 ** attempt) + random.uniform(0.0, 0.25)
+
+            time.sleep(delay)
+
+    if isinstance(last_exc, APITimeoutError):
+        raise LLMUnavailableError("timeout") from last_exc
+
+    raise LLMUnavailableError("provider unavailable") from last_exc
 
 
 def _repair_once(
@@ -171,6 +296,7 @@ def _repair_once(
     return _call_model(
         system_prompt=system_prompt,
         user_message=repair_message,
+        repair_count=1,
     )
 
 
@@ -199,16 +325,6 @@ def _write_quarantine(
 
 
 def call_triage_model(text: str) -> TriageResponse:
-    """
-    Production trust boundary:
-
-    1. User data is JSON-encoded and kept outside the system prompt.
-    2. First model response is parsed and schema-validated.
-    3. On failure, exactly ONE repair request is made.
-    4. If repair still fails, output is quarantined and a safe exception
-       reaches the API layer.
-    """
-
     prompt_version = get_prompt_version()
     system_prompt = load_system_prompt(prompt_version)
 
@@ -223,6 +339,7 @@ def call_triage_model(text: str) -> TriageResponse:
     first_raw = _call_model(
         system_prompt=system_prompt,
         user_message=user_payload,
+        repair_count=0,
     )
 
     try:

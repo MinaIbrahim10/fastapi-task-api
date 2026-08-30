@@ -269,7 +269,7 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from src.llm.client import TriageOutputError, call_triage_model
+from src.llm.client import LLMUnavailableError, TriageOutputError, call_triage_model
 from src.llm.schema import TriageRequest, TriageResponse
 from src.llm.stub import get_stub_triage
 
@@ -313,8 +313,18 @@ def ai_triage(payload: TriageRequest):
     if os.getenv("LLM_STUB", "0") == "1":
         return get_stub_triage()
 
+    if os.getenv("LLM_ENABLED", "true").lower() == "false":
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "LLM feature disabled",
+                "message": "AI triage is temporarily unavailable.",
+            },
+        )
+
     try:
         return call_triage_model(payload.text)
+
     except TriageOutputError:
         return JSONResponse(
             status_code=422,
@@ -324,6 +334,24 @@ def ai_triage(payload: TriageRequest):
                     "The model could not produce a valid structured response "
                     "after one repair attempt."
                 ),
+            },
+        )
+
+    except LLMUnavailableError as exc:
+        if str(exc) == "timeout":
+            return JSONResponse(
+                status_code=504,
+                content={
+                    "error": "LLM timeout",
+                    "message": "The model took too long to respond.",
+                },
+            )
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "LLM provider unavailable",
+                "message": "The model provider is temporarily unavailable.",
             },
         )
 
