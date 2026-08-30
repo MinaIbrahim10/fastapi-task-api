@@ -141,7 +141,7 @@ def test_second_failure_quarantines_and_stops(tmp_path):
 
     record = json.loads(rows[0])
 
-    assert record["prompt_version"] == "v1"
+    assert record["prompt_version"] == llm_client.get_prompt_version()
     assert record["repair_attempts"] == 1
     assert record["input"] == "Impossible input"
     assert "error" in record

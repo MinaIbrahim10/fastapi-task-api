@@ -25,6 +25,7 @@ load_dotenv(ROOT / ".env")
 
 PROMPT_FILES = {
     "v1": ROOT / "prompts" / "triage-v1.md",
+    "v2": ROOT / "prompts" / "triage-v2.md",
 }
 
 QUARANTINE_PATH = ROOT / "logs" / "quarantine.jsonl"

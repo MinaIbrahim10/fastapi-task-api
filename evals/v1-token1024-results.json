@@ -1,15 +1,15 @@
 {
   "summary": {
-    "date_utc": "2026-08-30T19:52:38.746893+00:00",
-    "prompt_version": "v2",
+    "date_utc": "2026-08-30T19:47:41.671440+00:00",
+    "prompt_version": "v1",
     "total_cases": 8,
     "trusted_responses": 8,
-    "category_matches": 8,
+    "category_matches": 7,
     "team_matches": 8,
-    "exact_matches": 8,
-    "category_accuracy": 1.0,
+    "exact_matches": 7,
+    "category_accuracy": 0.875,
     "team_accuracy": 1.0,
-    "exact_accuracy": 1.0
+    "exact_accuracy": 0.875
   },
   "results": [
     {
@@ -29,7 +29,7 @@
         "suggested_team": "engineering",
         "confidence": 0.98,
         "needs_review": false,
-        "reason": "The message reports a reproducible application crash when performing a data upload."
+        "reason": "The message describes a reproducible application crash when performing a specific action."
       }
     },
     {
@@ -49,7 +49,7 @@
         "suggested_team": "product",
         "confidence": 0.99,
         "needs_review": false,
-        "reason": "The user is requesting a new visual feature for the administrative interface."
+        "reason": "The user is requesting a new visual theme for the administrative interface."
       }
     },
     {
@@ -67,7 +67,7 @@
         "category": "billing",
         "urgency": "high",
         "suggested_team": "billing",
-        "confidence": 0.99,
+        "confidence": 0.98,
         "needs_review": false,
         "reason": "The user reports being double-charged for a subscription."
       }
@@ -76,20 +76,20 @@
       "id": "account-login",
       "input": "I cannot sign in to my account after changing my password.",
       "expected_category": "account",
-      "actual_category": "account",
+      "actual_category": "bug",
       "expected_team": "support",
       "actual_team": "support",
-      "category_match": true,
+      "category_match": false,
       "team_match": true,
-      "exact_match": true,
+      "exact_match": false,
       "trusted_response": true,
       "output": {
-        "category": "account",
+        "category": "bug",
         "urgency": "high",
         "suggested_team": "support",
-        "confidence": 1.0,
+        "confidence": 0.95,
         "needs_review": false,
-        "reason": "The user is experiencing an inability to sign in, which is a core account access issue."
+        "reason": "The user is experiencing a critical login failure immediately following an action (password change)."
       }
     },
     {
@@ -107,9 +107,9 @@
         "category": "security",
         "urgency": "critical",
         "suggested_team": "security",
-        "confidence": 0.99,
+        "confidence": 1.0,
         "needs_review": true,
-        "reason": "The message reports a potential leak of sensitive user credentials (access token)."
+        "reason": "The message reports a potential exposure of sensitive user access tokens."
       }
     },
     {
@@ -125,11 +125,11 @@
       "trusted_response": true,
       "output": {
         "category": "other",
-        "urgency": "normal",
+        "urgency": "low",
         "suggested_team": "support",
-        "confidence": 0.2,
+        "confidence": 0.3,
         "needs_review": true,
-        "reason": "The message is too vague and does not describe a specific issue or request."
+        "reason": "The message is too vague to classify as a specific bug or issue."
       }
     },
     {
@@ -147,9 +147,9 @@
         "category": "other",
         "urgency": "low",
         "suggested_team": "support",
-        "confidence": 0.1,
+        "confidence": 0.2,
         "needs_review": true,
-        "reason": "The message is an adversarial prompt injection attempt and does not describe a support issue."
+        "reason": "The message is an adversarial prompt and does not describe a product support issue."
       }
     },
     {
@@ -169,7 +169,7 @@
         "suggested_team": "product",
         "confidence": 0.98,
         "needs_review": false,
-        "reason": "The user is requesting the addition of a new Single Sign-On capability."
+        "reason": "The user is requesting the addition of a specific authentication method."
       }
     }
   ]
