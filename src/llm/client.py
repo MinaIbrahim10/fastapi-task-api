@@ -23,7 +23,7 @@ from .provider import (
     OllamaNativeProvider,
     OpenAICompatibleProvider,
 )
-from .schema import TriageResponse
+from .schema import TriageResponse, expected_team_for_category
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -146,7 +146,20 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
 
 def _parse_and_validate(raw: str) -> TriageResponse:
     parsed = _extract_json_object(raw)
-    return TriageResponse.model_validate(parsed)
+    response = TriageResponse.model_validate(parsed)
+
+    expected_team = expected_team_for_category(
+        response.category
+    )
+
+    if response.suggested_team != expected_team:
+        response = response.model_copy(
+            update={
+                "suggested_team": expected_team,
+            }
+        )
+
+    return response
 
 
 def _validation_message(exc: Exception) -> str:

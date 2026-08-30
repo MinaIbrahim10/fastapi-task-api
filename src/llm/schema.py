@@ -47,3 +47,17 @@ class TriageResponse(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
     needs_review: bool
     reason: str = Field(..., min_length=1, max_length=240)
+
+
+CATEGORY_TEAM_MAP = {
+    Category.BUG: SuggestedTeam.ENGINEERING,
+    Category.FEATURE: SuggestedTeam.PRODUCT,
+    Category.ACCOUNT: SuggestedTeam.SUPPORT,
+    Category.BILLING: SuggestedTeam.BILLING,
+    Category.SECURITY: SuggestedTeam.SECURITY,
+    Category.OTHER: SuggestedTeam.SUPPORT,
+}
+
+
+def expected_team_for_category(category: Category) -> SuggestedTeam:
+    return CATEGORY_TEAM_MAP[category]
