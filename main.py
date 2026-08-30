@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
+from redis_client import redis_ping
 from postgres_repository import (
     initialize_database,
     list_tasks as repository_list_tasks,
@@ -24,6 +25,15 @@ app = FastAPI(
     version="1.1",
     description="A PostgreSQL-backed CRUD API for managing tasks."
 )
+
+
+@app.on_event("startup")
+def verify_redis_connection():
+    if not redis_ping():
+        raise RuntimeError(
+            "Redis PING failed during startup"
+        )
+
 
 
 class TaskCreate(BaseModel):

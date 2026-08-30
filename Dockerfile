@@ -9,7 +9,7 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py postgres_repository.py ./
+COPY main.py postgres_repository.py redis_client.py ./
 COPY sql ./sql
 
 EXPOSE 8000
