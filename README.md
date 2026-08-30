@@ -707,6 +707,20 @@ This was useful because it separated two different skills: generating a working 
 
 # A17 — Put an LLM Behind the API
 
+## A17 AI Rematch
+
+The independent Codex rematch for this assignment is isolated in:
+
+```text
+a17-ai-rematch/
+```
+
+The root directories `ai-version/` and `ai-version-v2/` belong to the earlier
+PostgreSQL/Docker assignment and are intentionally preserved as its AI V1 and
+AI V2/rematch evidence.
+
+
+
 ## What it does
 
 `POST /ai/triage` accepts one software/product support message and returns
